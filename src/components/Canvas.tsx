@@ -200,9 +200,11 @@ const Canvas: React.FC<CanvasProps> = ({
   const gridWidth = gridSize.cols * charWidth;
   const gridHeight = gridSize.rows * lineHeight;
 
-  // Selected objects for rendering selection boxes
+  // Selected objects for rendering selection boxes (sorted by z-index so overlays stack correctly)
   const selectedObjects = useMemo(() => {
-    return objects.filter(obj => selectedIds.has(obj.id));
+    return objects
+      .filter(obj => selectedIds.has(obj.id))
+      .sort((a, b) => a.zIndex - b.zIndex);
   }, [objects, selectedIds]);
 
   // Drawing preview
