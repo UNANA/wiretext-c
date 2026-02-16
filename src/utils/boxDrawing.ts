@@ -918,10 +918,10 @@ function isPointOnLine(startCol: number, startRow: number, endCol: number, endRo
   return false;
 }
 
-// Hit test - precise detection for different object types
+// Hit test - precise detection for different object types (checks topmost by z-index first)
 export function hitTest(objects: CanvasObject[], col: number, row: number): CanvasObject | null {
-  for (let i = objects.length - 1; i >= 0; i--) {
-    const obj = objects[i];
+  const sorted = [...objects].sort((a, b) => b.zIndex - a.zIndex); // highest z-index first
+  for (const obj of sorted) {
 
     // Box/Component: Hit within bounding box
     if (obj.type === 'box' || obj.type === 'component') {
