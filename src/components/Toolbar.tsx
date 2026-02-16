@@ -1,0 +1,223 @@
+import React from 'react';
+import type { Tool, ComponentType } from '../types';
+import { COMPONENT_DEFS } from '../types';
+
+interface ToolbarProps {
+  tool: Tool;
+  setTool: (tool: Tool) => void;
+  pendingComponent: ComponentType | null;
+  setPendingComponent: (type: ComponentType | null) => void;
+  visibleComponents?: Record<ComponentType, boolean>;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
+}
+
+const DRAW_TOOLS: { id: Tool; label: string; shortcut?: string; icon: string }[] = [
+  { id: 'select', label: 'Select', shortcut: 'V', icon: '↖' },
+  { id: 'box', label: 'Box', shortcut: 'B', icon: '┌─┐' },
+  { id: 'text', label: 'Text', shortcut: 'T', icon: 'Aa' },
+  { id: 'line', label: 'Line', shortcut: 'L', icon: '───' },
+  { id: 'arrow', label: 'Arrow', shortcut: 'A', icon: '──▸' },
+];
+
+const CATEGORIES = ['input', 'layout', 'display'] as const;
+
+const Toolbar: React.FC<ToolbarProps> = ({
+  tool,
+  setTool,
+  pendingComponent,
+  setPendingComponent,
+  visibleComponents,
+  collapsed = false,
+  onToggleCollapse,
+}) => {
+  const isToolActive = (id: Tool) => tool === id;
+  const isComponentActive = (type: ComponentType) => pendingComponent === type;
+
+  const handleComponentClick = (type: ComponentType) => {
+    if (pendingComponent === type) {
+      setPendingComponent(null);
+    } else {
+      setPendingComponent(type);
+    }
+  };
+
+
+  // Collapsed sidebar — icons only
+  if (collapsed) {
+    return (
+      <div className="flex w-10 flex-col border-r border-border bg-surface select-none">
+        {/* Expand button */}
+        <div className="flex items-center justify-center border-b border-border py-2">
+          <button
+            className="text-text-dim text-xs hover:text-text transition-colors"
+            onClick={onToggleCollapse}
+            title="Expand sidebar"
+          >
+            ›
+          </button>
+        </div>
+
+        {/* Tool icons */}
+        <div className="flex-1 overflow-y-auto">
+          {/* Select */}
+          <div className="p-1">
+            <button
+              className={`flex w-full items-center justify-center rounded p-1.5 text-xs transition-colors ${isToolActive('select') && !pendingComponent
+                ? 'bg-accent text-bg'
+                : 'text-text-dim hover:bg-surface-hover hover:text-text'
+                }`}
+              onClick={() => { setTool('select'); setPendingComponent(null); }}
+              title="Select (V)"
+            >
+              <span className="font-mono text-2xs">↖</span>
+            </button>
+          </div>
+
+          <div className="mx-1 h-px bg-border" />
+
+          {/* Draw tools */}
+          <div className="p-1 flex flex-col gap-0.5">
+            {DRAW_TOOLS.slice(1).map((t) => (
+              <button
+                key={t.id}
+                className={`flex items-center justify-center rounded p-1.5 text-xs transition-colors ${isToolActive(t.id) && !pendingComponent
+                  ? 'bg-accent text-bg'
+                  : 'text-text-dim hover:bg-surface-hover hover:text-text'
+                  }`}
+                onClick={() => { setTool(t.id); setPendingComponent(null); }}
+                title={`${t.label} (${t.shortcut})`}
+              >
+                <span className="font-mono text-2xs">{t.icon.slice(0, 2)}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="mx-1 h-px bg-border" />
+
+          {/* Component icons */}
+          {CATEGORIES.map((category) => {
+            const components = COMPONENT_DEFS.filter((c) => {
+              if (c.category !== category) return false;
+              if (visibleComponents && !visibleComponents[c.type as ComponentType]) return false;
+              return true;
+            });
+            if (components.length === 0) return null;
+            return (
+              <div key={category} className="p-1 flex flex-col gap-0.5">
+                {components.map((comp) => (
+                  <button
+                    key={comp.type}
+                    className={`flex items-center justify-center rounded p-1.5 text-xs transition-colors ${isComponentActive(comp.type as ComponentType)
+                      ? 'bg-accent text-bg'
+                      : 'text-text-dim hover:bg-surface-hover hover:text-text'
+                      }`}
+                    onClick={() => handleComponentClick(comp.type as ComponentType)}
+                    title={comp.name}
+                  >
+                    <span className="font-mono text-2xs">{comp.preview.slice(0, 2)}</span>
+                  </button>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // Full sidebar
+  return (
+    <div className="flex w-44 flex-col border-r border-border bg-surface select-none">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-border px-3 py-2">
+        <span className="text-2xs text-text-dim uppercase tracking-wider">WireText</span>
+        <button
+          className="text-text-dim text-xs hover:text-text transition-colors"
+          onClick={onToggleCollapse}
+          title="Collapse sidebar (P)"
+        >
+          ‹
+        </button>
+      </div>
+
+      {/* Tools List */}
+      <div className="flex-1 overflow-y-auto">
+        {/* Select Tool */}
+        <div className="p-2">
+          <button
+            className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors ${isToolActive('select') && !pendingComponent
+              ? 'bg-accent text-bg'
+              : 'text-text-dim hover:bg-surface-hover hover:text-text'
+              }`}
+            onClick={() => { setTool('select'); setPendingComponent(null); }}
+          >
+            <span className="w-10 shrink-0 font-mono text-2xs">↖</span>
+            <span className="flex-1">Select</span>
+            <span className="font-mono text-2xs opacity-40">V</span>
+          </button>
+        </div>
+
+        <div className="mx-2 h-px bg-border" />
+
+        {/* Draw Tools */}
+        <div className="p-2">
+          <div className="text-2xs text-text-dim uppercase tracking-wider mb-2">Draw</div>
+          <div className="flex flex-col gap-0.5">
+            {DRAW_TOOLS.slice(1).map((t) => (
+              <button
+                key={t.id}
+                className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors ${isToolActive(t.id) && !pendingComponent
+                  ? 'bg-accent text-bg'
+                  : 'text-text-dim hover:bg-surface-hover hover:text-text'
+                  }`}
+                onClick={() => { setTool(t.id); setPendingComponent(null); }}
+              >
+                <span className="w-10 shrink-0 font-mono text-2xs">{t.icon}</span>
+                <span className="flex-1">{t.label}</span>
+                {t.shortcut && (
+                  <span className="font-mono text-2xs opacity-40">{t.shortcut}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mx-2 h-px bg-border" />
+
+        {/* Component Categories */}
+        {CATEGORIES.map((category) => {
+          const components = COMPONENT_DEFS.filter((c) => {
+            if (c.category !== category) return false;
+            if (visibleComponents && !visibleComponents[c.type as ComponentType]) return false;
+            return true;
+          });
+          if (components.length === 0) return null;
+          return (
+            <div key={category} className="p-2">
+              <div className="text-2xs text-text-dim uppercase tracking-wider mb-2">{category}</div>
+              <div className="flex flex-col gap-0.5">
+                {components.map((comp) => (
+                  <button
+                    key={comp.type}
+                    className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors ${isComponentActive(comp.type as ComponentType)
+                      ? 'bg-accent text-bg'
+                      : 'text-text-dim hover:bg-surface-hover hover:text-text'
+                      }`}
+                    onClick={() => handleComponentClick(comp.type as ComponentType)}
+                  >
+                    <span className="w-10 shrink-0 font-mono text-2xs">{comp.preview}</span>
+                    <span className="flex-1">{comp.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+    </div>
+  );
+};
+
+export default Toolbar;
