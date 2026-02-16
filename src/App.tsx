@@ -179,6 +179,7 @@ function App() {
           tool={tool}
           cursor={cursor}
           selectedObjects={selectedObjects}
+          objects={objects}
           objectsCount={objectsCount}
           onUpdateObject={updateObject}
         />
