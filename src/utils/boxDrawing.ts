@@ -1,5 +1,8 @@
 import type { Grid, BoxStyle, CanvasObject, ComponentType, GridSize } from '../types';
 
+const DEFAULT_LAYER_ID = 'layer-1';
+const DEFAULT_LAYER_NAME = 'Layer 1';
+
 // Unicode Box Drawing Characters - exact wire format
 export const i = {
   single: {
@@ -493,7 +496,7 @@ export function renderObjectsToGrid(objects: CanvasObject[], gridSize: GridSize)
   }
 
   // Sort by zIndex and render
-  const sortedObjects = [...objects].sort((a, b) => a.zIndex - b.zIndex);
+  const sortedObjects = [...objects].sort(compareObjectsByStackOrder);
 
   for (const obj of sortedObjects) {
     const { col, row } = obj.position;
@@ -531,7 +534,46 @@ export function renderObjectsToGrid(objects: CanvasObject[], gridSize: GridSize)
           break;
         }
 
-        if (row === endRow) {
+        if (obj.isConnector && obj.connectorPath && obj.connectorPath.length >= 2) {
+          for (let i = 0; i < obj.connectorPath.length - 1; i++) {
+            const from = obj.connectorPath[i];
+            const to = obj.connectorPath[i + 1];
+            if (from.row === to.row) {
+              const start = Math.min(from.col, to.col);
+              const end = Math.max(from.col, to.col);
+              for (let c = start; c <= end; c++) {
+                setChar(grid, c, from.row, a.horizontal);
+              }
+            } else if (from.col === to.col) {
+              const start = Math.min(from.row, to.row);
+              const end = Math.max(from.row, to.row);
+              for (let r = start; r <= end; r++) {
+                setChar(grid, from.col, r, a.vertical);
+              }
+            }
+          }
+
+          for (let i = 1; i < obj.connectorPath.length - 1; i++) {
+            const prev = obj.connectorPath[i - 1];
+            const curr = obj.connectorPath[i];
+            const next = obj.connectorPath[i + 1];
+            const fromLeft = prev.col < curr.col;
+            const fromRight = prev.col > curr.col;
+            const fromUp = prev.row < curr.row;
+            const fromDown = prev.row > curr.row;
+            const toLeft = next.col < curr.col;
+            const toRight = next.col > curr.col;
+            const toUp = next.row < curr.row;
+            const toDown = next.row > curr.row;
+
+            let corner = '┼';
+            if ((fromLeft && toDown) || (toLeft && fromDown)) corner = '┐';
+            else if ((fromLeft && toUp) || (toLeft && fromUp)) corner = '┘';
+            else if ((fromRight && toDown) || (toRight && fromDown)) corner = '┌';
+            else if ((fromRight && toUp) || (toRight && fromUp)) corner = '└';
+            setChar(grid, curr.col, curr.row, corner);
+          }
+        } else if (row === endRow) {
           // Horizontal line
           const start = Math.min(col, endCol);
           const end = Math.max(col, endCol);
@@ -801,6 +843,24 @@ export function getBoundingBox(obj: CanvasObject): { col: number; row: number; w
         return { col: obj.position.col, row: obj.position.row, width: 1, height: 1 };
       }
 
+      if (obj.isConnector && obj.connectorPath && obj.connectorPath.length > 0) {
+        let minCol = Number.POSITIVE_INFINITY;
+        let minRow = Number.POSITIVE_INFINITY;
+        let maxCol = Number.NEGATIVE_INFINITY;
+        let maxRow = Number.NEGATIVE_INFINITY;
+        for (const point of obj.connectorPath) {
+          minCol = Math.min(minCol, point.col);
+          minRow = Math.min(minRow, point.row);
+          maxCol = Math.max(maxCol, point.col);
+          maxRow = Math.max(maxRow, point.row);
+        }
+        return {
+          col: minCol,
+          row: minRow,
+          width: maxCol - minCol + 1,
+          height: maxRow - minRow + 1,
+        };
+      }
       const startCol = Math.min(obj.position.col, endCol);
       const startRow = Math.min(obj.position.row, endRow);
       return {
@@ -833,6 +893,9 @@ export function createDefaultObject(
     width: 10,
     height: 6,
     zIndex,
+    layerId: DEFAULT_LAYER_ID,
+    layerName: DEFAULT_LAYER_NAME,
+    layerOrder: 0,
     borderStyle: 'single',
     fill: 'solid'
   };
@@ -918,9 +981,19 @@ function isPointOnLine(startCol: number, startRow: number, endCol: number, endRo
   return false;
 }
 
+function isPointOnConnectorPath(path: { col: number; row: number }[], col: number, row: number): boolean {
+  if (path.length < 2) return false;
+  for (let i = 0; i < path.length - 1; i++) {
+    if (isPointOnLine(path[i].col, path[i].row, path[i + 1].col, path[i + 1].row, col, row)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Hit test - precise detection for different object types (checks topmost by z-index first)
 export function hitTest(objects: CanvasObject[], col: number, row: number): CanvasObject | null {
-  const sorted = [...objects].sort((a, b) => b.zIndex - a.zIndex); // highest z-index first
+  const sorted = [...objects].sort((a, b) => compareObjectsByStackOrder(b, a)); // topmost first
   for (const obj of sorted) {
 
     // Box/Component: Hit within bounding box
@@ -969,12 +1042,22 @@ export function hitTest(objects: CanvasObject[], col: number, row: number): Canv
         continue;
       }
 
-      if (isPointOnLine(obj.position.col, obj.position.row, endCol, endRow, col, row)) {
+      if (obj.isConnector && obj.connectorPath && obj.connectorPath.length >= 2) {
+        if (isPointOnConnectorPath(obj.connectorPath, col, row)) {
+          return obj;
+        }
+      } else if (isPointOnLine(obj.position.col, obj.position.row, endCol, endRow, col, row)) {
         return obj;
       }
     }
   }
   return null;
+}
+
+export function compareObjectsByStackOrder(a: CanvasObject, b: CanvasObject): number {
+  const layerOrderDiff = (a.layerOrder ?? 0) - (b.layerOrder ?? 0);
+  if (layerOrderDiff !== 0) return layerOrderDiff;
+  return a.zIndex - b.zIndex;
 }
 
 // Get resize handle

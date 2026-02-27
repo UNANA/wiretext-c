@@ -2,6 +2,47 @@
 @tailwind components;
 @tailwind utilities;
 
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/JetBrainsMono-Regular.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+:root,
+.theme-dark {
+  --color-bg: 10 10 15;
+  --color-surface: 18 18 26;
+  --color-surface-hover: 26 26 38;
+  --color-border: 42 42 58;
+  --color-text: 224 224 232;
+  --color-text-dim: 133 133 160;
+  --color-accent: 108 138 255;
+  --color-grid-dot: 19 19 32;
+  --color-selection: 108 138 255;
+  --color-selection-border: 108 138 255;
+  --scrollbar-track: 18 18 26;
+  --scrollbar-thumb: 42 42 58;
+  --scrollbar-thumb-hover: 58 58 74;
+}
+
+.theme-light {
+  --color-bg: 248 249 252;
+  --color-surface: 255 255 255;
+  --color-surface-hover: 241 245 249;
+  --color-border: 203 213 225;
+  --color-text: 15 23 42;
+  --color-text-dim: 100 116 139;
+  --color-accent: 37 99 235;
+  --color-grid-dot: 218 226 238;
+  --color-selection: 37 99 235;
+  --color-selection-border: 37 99 235;
+  --scrollbar-track: 241 245 249;
+  --scrollbar-thumb: 148 163 184;
+  --scrollbar-thumb-hover: 100 116 139;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -17,8 +58,12 @@ body {
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: #0a0a0f;
-  color: #e0e0e8;
+  background: rgb(var(--color-bg));
+  color: rgb(var(--color-text));
+}
+
+textarea {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
 }
 
 #root {
@@ -32,20 +77,20 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #12121a;
+  background: rgb(var(--scrollbar-track));
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2a2a3a;
+  background: rgb(var(--scrollbar-thumb));
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a3a4a;
+  background: rgb(var(--scrollbar-thumb-hover));
 }
 
 /* Grid canvas styles */
 .grid-canvas {
-  background-image: radial-gradient(circle, #131320 1px, transparent 1px);
+  background-image: radial-gradient(circle, rgb(var(--color-grid-dot)) 1px, transparent 1px);
   background-size: 20px 20px;
 }

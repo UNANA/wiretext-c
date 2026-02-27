@@ -19,6 +19,7 @@ const DRAW_TOOLS: { id: Tool; label: string; shortcut?: string; icon: string }[]
   { id: 'text', label: 'Text', shortcut: 'T', icon: 'Aa' },
   { id: 'line', label: 'Line', shortcut: 'L', icon: '───' },
   { id: 'arrow', label: 'Arrow', shortcut: 'A', icon: '──▸' },
+  { id: 'connector', label: 'Connector', shortcut: 'C', icon: 'o─o' },
 ];
 
 const CATEGORIES = ['input', 'layout', 'display'] as const;

@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom';
 import {
   renderObjectsToGrid,
   createDefaultObject,
+  compareObjectsByStackOrder,
   hitTest,
   getResizeHandle,
   getLineLength,
@@ -12,7 +13,7 @@ import {
   calculateGridSize,
   generateId,
 } from '../utils/boxDrawing';
-import type { Grid, Tool, Position, CanvasObject, ComponentType, DragState, ResizeHandle, GridSize } from '../types';
+import type { Grid, Tool, Position, CanvasObject, ComponentType, DragState, ResizeHandle, GridSize, CanvasLayer } from '../types';
 
 export const TOOLS = {
   SELECT: 'select' as Tool,
@@ -20,6 +21,7 @@ export const TOOLS = {
   TEXT: 'text' as Tool,
   LINE: 'line' as Tool,
   ARROW: 'arrow' as Tool,
+  CONNECTOR: 'connector' as Tool,
 };
 
 export type ExportFormat = 'text' | 'markdown' | 'html' | 'github';
@@ -49,6 +51,7 @@ export interface UseCanvasReturn {
   editingObjectId: string | null;
   setEditingObjectId: (id: string | null) => void;
   marquee: MarqueeState | null;
+  layers: CanvasLayer[];
 
   // Actions
   addObject: (obj: Omit<CanvasObject, 'id' | 'zIndex'>) => CanvasObject;
@@ -79,8 +82,17 @@ export interface UseCanvasReturn {
 
   // Copy/Paste/Duplicate
   copySelection: () => void;
+  cutSelection: () => void;
   pasteClipboard: () => void;
   duplicateSelection: () => void;
+  selectAll: () => void;
+  createLayerFromSelection: () => void;
+  moveSelectionToLayer: (layerId: string) => void;
+  moveObjectToLayer: (objectId: string, layerId: string) => void;
+  reorderObjectByDrop: (dragObjectId: string, targetObjectId: string) => void;
+  renameLayer: (layerId: string, name: string) => void;
+  reorderLayer: (dragLayerId: string, targetLayerId: string) => void;
+  arrangeSelectionLayer: (mode: 'toFront' | 'forward' | 'backward' | 'toBack') => void;
 
   // Getters
   selectedObjects: CanvasObject[];
@@ -94,9 +106,84 @@ const INITIAL_ROWS = 60;
 const EXPAND_MARGIN = 20;
 const MAX_SIZE = 2000;
 const MAX_HISTORY = 100;
+const DEFAULT_LAYER_ID = 'layer-1';
+const DEFAULT_LAYER_NAME = 'Layer 1';
+
+function ensureLayerFields(obj: CanvasObject): CanvasObject {
+  return {
+    ...obj,
+    layerId: obj.layerId ?? DEFAULT_LAYER_ID,
+    layerName: obj.layerName ?? DEFAULT_LAYER_NAME,
+    layerOrder: obj.layerOrder ?? 0,
+  };
+}
+
+function normalizeStackOrder(list: CanvasObject[], preferredLayerOrder: Map<string, number> = new Map()): CanvasObject[] {
+  const withLayers = list.map(ensureLayerFields);
+  const grouped = new Map<string, CanvasObject[]>();
+  for (const obj of withLayers) {
+    const key = obj.layerId ?? DEFAULT_LAYER_ID;
+    const layer = grouped.get(key) ?? [];
+    layer.push(obj);
+    grouped.set(key, layer);
+  }
+
+  const sortedLayers = [...grouped.values()]
+    .sort((a, b) => {
+      const aId = a[0]?.layerId ?? DEFAULT_LAYER_ID;
+      const bId = b[0]?.layerId ?? DEFAULT_LAYER_ID;
+      const aOrder = preferredLayerOrder.get(aId) ?? (a[0]?.layerOrder ?? 0);
+      const bOrder = preferredLayerOrder.get(bId) ?? (b[0]?.layerOrder ?? 0);
+      return aOrder - bOrder;
+    });
+
+  const normalized: CanvasObject[] = [];
+  sortedLayers.forEach((layer) => {
+    const layerId = layer[0]?.layerId ?? DEFAULT_LAYER_ID;
+    const layerOrder = preferredLayerOrder.get(layerId) ?? (layer[0]?.layerOrder ?? 0);
+    layer
+      .sort((a, b) => a.zIndex - b.zIndex)
+      .forEach((obj, zIndex) => {
+        normalized.push({
+          ...obj,
+          layerOrder,
+          zIndex,
+        });
+      });
+  });
+
+  return normalized;
+}
+
+function buildLayers(list: CanvasObject[]): CanvasLayer[] {
+  const grouped = new Map<string, CanvasObject[]>();
+  for (const obj of list.map(ensureLayerFields)) {
+    const key = obj.layerId ?? DEFAULT_LAYER_ID;
+    const layer = grouped.get(key) ?? [];
+    layer.push(obj);
+    grouped.set(key, layer);
+  }
+
+  const fromObjects = [...grouped.entries()]
+    .map(([id, objectsInLayer]) => ({
+      id,
+      name: objectsInLayer[0]?.layerName || DEFAULT_LAYER_NAME,
+      order: objectsInLayer[0]?.layerOrder ?? 0,
+      objectCount: objectsInLayer.length,
+    }))
+    .sort((a, b) => a.order - b.order);
+
+  if (fromObjects.length === 0) {
+    return [{ id: DEFAULT_LAYER_ID, name: DEFAULT_LAYER_NAME, order: 0, objectCount: 0 }];
+  }
+  return fromObjects;
+}
 
 export function useCanvas(): UseCanvasReturn {
   const [objects, setObjects] = useState<CanvasObject[]>([]);
+  const [layersState, setLayersState] = useState<CanvasLayer[]>([
+    { id: DEFAULT_LAYER_ID, name: DEFAULT_LAYER_NAME, order: 0, objectCount: 0 },
+  ]);
   const [gridSize, setGridSize] = useState<GridSize>({ cols: INITIAL_COLS, rows: INITIAL_ROWS });
   const [tool, setTool] = useState<Tool>(TOOLS.SELECT);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -108,6 +195,11 @@ export function useCanvas(): UseCanvasReturn {
   const [cursor, setCursor] = useState<Position>({ col: 0, row: 0 });
   const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
   const [marquee, setMarquee] = useState<MarqueeState | null>(null);
+  const [connectorStartAnchor, setConnectorStartAnchor] = useState<{
+    objectId: string;
+    handle: ResizeHandle;
+    position: Position;
+  } | null>(null);
 
   // Undo/Redo history
   const [past, setPast] = useState<CanvasObject[][]>([]);
@@ -151,8 +243,318 @@ export function useCanvas(): UseCanvasReturn {
   }, [objects, gridSize]);
 
   const selectedObjects = useMemo(() => {
-    return objects.filter(obj => selectedIds.has(obj.id));
+    return objects
+      .filter(obj => selectedIds.has(obj.id))
+      .sort(compareObjectsByStackOrder);
   }, [objects, selectedIds]);
+
+  const layers = useMemo(() => {
+    const objectLayers = buildLayers(objects);
+    const stateById = new Map(layersState.map(layer => [layer.id, layer]));
+    const objectById = new Map(objectLayers.map(layer => [layer.id, layer]));
+    const mergedIds = new Set<string>([
+      ...layersState.map(layer => layer.id),
+      ...objectLayers.map(layer => layer.id),
+    ]);
+
+    const merged = [...mergedIds].map((id, idx) => {
+      const fromState = stateById.get(id);
+      const fromObjects = objectById.get(id);
+      return {
+        id,
+        name: fromState?.name ?? fromObjects?.name ?? `Layer ${idx + 1}`,
+        order: fromState?.order ?? fromObjects?.order ?? idx,
+        objectCount: fromObjects?.objectCount ?? 0,
+      };
+    });
+
+    return merged
+      .sort((a, b) => a.order - b.order)
+      .map((layer, order) => ({ ...layer, order }));
+  }, [layersState, objects]);
+
+  const getAnchorPosition = useCallback((obj: CanvasObject, handle: ResizeHandle): Position => {
+    const bbox = getBoundingBox(obj);
+    switch (handle) {
+      case 'nw': return { col: bbox.col, row: bbox.row };
+      case 'n': return { col: bbox.col + Math.floor(bbox.width / 2), row: bbox.row };
+      case 'ne': return { col: bbox.col + bbox.width - 1, row: bbox.row };
+      case 'e': return { col: bbox.col + bbox.width - 1, row: bbox.row + Math.floor(bbox.height / 2) };
+      case 'se': return { col: bbox.col + bbox.width - 1, row: bbox.row + bbox.height - 1 };
+      case 's': return { col: bbox.col + Math.floor(bbox.width / 2), row: bbox.row + bbox.height - 1 };
+      case 'sw': return { col: bbox.col, row: bbox.row + bbox.height - 1 };
+      case 'w': return { col: bbox.col, row: bbox.row + Math.floor(bbox.height / 2) };
+    }
+  }, []);
+
+  const getConnectorAnchor = useCallback((col: number, row: number): {
+    objectId: string;
+    handle: ResizeHandle;
+    position: Position;
+  } | null => {
+    const hit = hitTest(objects, col, row);
+    if (!hit || hit.type === 'line' || hit.type === 'arrow') {
+      return null;
+    }
+
+    const anchors: { handle: ResizeHandle; position: Position }[] = [
+      { handle: 'nw', position: getAnchorPosition(hit, 'nw') },
+      { handle: 'n', position: getAnchorPosition(hit, 'n') },
+      { handle: 'ne', position: getAnchorPosition(hit, 'ne') },
+      { handle: 'e', position: getAnchorPosition(hit, 'e') },
+      { handle: 'se', position: getAnchorPosition(hit, 'se') },
+      { handle: 's', position: getAnchorPosition(hit, 's') },
+      { handle: 'sw', position: getAnchorPosition(hit, 'sw') },
+      { handle: 'w', position: getAnchorPosition(hit, 'w') },
+    ];
+
+    let closest = anchors[0];
+    let minDistance = Number.POSITIVE_INFINITY;
+    for (const anchor of anchors) {
+      const dx = anchor.position.col - col;
+      const dy = anchor.position.row - row;
+      const distance = dx * dx + dy * dy;
+      if (distance < minDistance) {
+        minDistance = distance;
+        closest = anchor;
+      }
+    }
+
+    return {
+      objectId: hit.id,
+      handle: closest.handle,
+      position: closest.position,
+    };
+  }, [objects, getAnchorPosition]);
+
+  const getConnectorAnchorForEdit = useCallback((col: number, row: number, editingConnectorId: string): {
+    objectId: string;
+    handle: ResizeHandle;
+    position: Position;
+  } | null => {
+    const hit = hitTest(objects.filter(obj => obj.id !== editingConnectorId), col, row);
+    if (!hit || hit.type === 'line' || hit.type === 'arrow') {
+      return null;
+    }
+
+    const anchors: { handle: ResizeHandle; position: Position }[] = [
+      { handle: 'nw', position: getAnchorPosition(hit, 'nw') },
+      { handle: 'n', position: getAnchorPosition(hit, 'n') },
+      { handle: 'ne', position: getAnchorPosition(hit, 'ne') },
+      { handle: 'e', position: getAnchorPosition(hit, 'e') },
+      { handle: 'se', position: getAnchorPosition(hit, 'se') },
+      { handle: 's', position: getAnchorPosition(hit, 's') },
+      { handle: 'sw', position: getAnchorPosition(hit, 'sw') },
+      { handle: 'w', position: getAnchorPosition(hit, 'w') },
+    ];
+
+    let closest = anchors[0];
+    let minDistance = Number.POSITIVE_INFINITY;
+    for (const anchor of anchors) {
+      const dx = anchor.position.col - col;
+      const dy = anchor.position.row - row;
+      const distance = dx * dx + dy * dy;
+      if (distance < minDistance) {
+        minDistance = distance;
+        closest = anchor;
+      }
+    }
+
+    return {
+      objectId: hit.id,
+      handle: closest.handle,
+      position: closest.position,
+    };
+  }, [objects, getAnchorPosition]);
+
+  const pointKey = useCallback((col: number, row: number) => `${col},${row}`, []);
+
+  const routeConnectorPath = useCallback((
+    start: Position,
+    end: Position,
+    list: CanvasObject[],
+    startHandle?: ResizeHandle,
+    endHandle?: ResizeHandle
+  ): Position[] => {
+    if (start.col === end.col && start.row === end.row) return [start, end];
+
+    const nonConnectorObjects = list.filter(obj => obj.type === 'box' || obj.type === 'component' || obj.type === 'text');
+    const obstacleCells = new Set<string>();
+
+    // Keep a one-cell clearance around objects so connectors don't visually overlap.
+    for (const obj of nonConnectorObjects) {
+      const bbox = getBoundingBox(obj);
+      const minCol = Math.max(0, bbox.col - 1);
+      const minRow = Math.max(0, bbox.row - 1);
+      const maxCol = bbox.col + bbox.width;
+      const maxRow = bbox.row + bbox.height;
+      for (let c = minCol; c <= maxCol; c++) {
+        for (let r = minRow; r <= maxRow; r++) {
+          obstacleCells.add(pointKey(c, r));
+        }
+      }
+    }
+
+    const getHandleDirection = (handle?: ResizeHandle): { dc: number; dr: number } => {
+      if (handle === 'n') return { dc: 0, dr: -1 };
+      if (handle === 's') return { dc: 0, dr: 1 };
+      if (handle === 'e' || handle === 'ne' || handle === 'se') return { dc: 1, dr: 0 };
+      if (handle === 'w' || handle === 'nw' || handle === 'sw') return { dc: -1, dr: 0 };
+
+      // Fallback if no handle is available.
+      if (Math.abs(end.col - start.col) >= Math.abs(end.row - start.row)) {
+        return { dc: end.col >= start.col ? 1 : -1, dr: 0 };
+      }
+      return { dc: 0, dr: end.row >= start.row ? 1 : -1 };
+    };
+
+    const stubLen = 2;
+    const startDir = getHandleDirection(startHandle);
+    const endDir = getHandleDirection(endHandle);
+    const startStub: Position = {
+      col: start.col + startDir.dc * stubLen,
+      row: start.row + startDir.dr * stubLen,
+    };
+    const endStub: Position = {
+      col: end.col + endDir.dc * stubLen,
+      row: end.row + endDir.dr * stubLen,
+    };
+
+    obstacleCells.delete(pointKey(start.col, start.row));
+    obstacleCells.delete(pointKey(end.col, end.row));
+    obstacleCells.delete(pointKey(startStub.col, startStub.row));
+    obstacleCells.delete(pointKey(endStub.col, endStub.row));
+
+    const extraPad = 25;
+    const minCol = Math.max(0, Math.min(start.col, end.col, startStub.col, endStub.col) - extraPad);
+    const minRow = Math.max(0, Math.min(start.row, end.row, startStub.row, endStub.row) - extraPad);
+    const maxCol = Math.max(start.col, end.col, startStub.col, endStub.col) + extraPad;
+    const maxRow = Math.max(start.row, end.row, startStub.row, endStub.row) + extraPad;
+
+    const queue: Position[] = [startStub];
+    const visited = new Set<string>([pointKey(startStub.col, startStub.row)]);
+    const parent = new Map<string, string>();
+    const dirs = [
+      { dc: 1, dr: 0 },
+      { dc: -1, dr: 0 },
+      { dc: 0, dr: 1 },
+      { dc: 0, dr: -1 },
+    ];
+
+    let found = false;
+    while (queue.length > 0 && !found) {
+      const current = queue.shift()!;
+      for (const dir of dirs) {
+        const nextCol = current.col + dir.dc;
+        const nextRow = current.row + dir.dr;
+        if (nextCol < minCol || nextCol > maxCol || nextRow < minRow || nextRow > maxRow) continue;
+        const nextKey = pointKey(nextCol, nextRow);
+        if (visited.has(nextKey)) continue;
+        if (obstacleCells.has(nextKey)) continue;
+        visited.add(nextKey);
+        parent.set(nextKey, pointKey(current.col, current.row));
+        if (nextCol === endStub.col && nextRow === endStub.row) {
+          found = true;
+          break;
+        }
+        queue.push({ col: nextCol, row: nextRow });
+      }
+    }
+
+    if (!found) {
+      // Fallback to simple elbow/straight route.
+      const simple: Position[] = [start, startStub];
+      if (startStub.col === endStub.col || startStub.row === endStub.row) {
+        simple.push(endStub, end);
+      } else {
+        simple.push({ col: endStub.col, row: startStub.row }, endStub, end);
+      }
+      return simple;
+    }
+
+    const fullPath: Position[] = [];
+    let cursorKey = pointKey(endStub.col, endStub.row);
+    fullPath.push(endStub);
+    while (cursorKey !== pointKey(startStub.col, startStub.row)) {
+      const prevKey = parent.get(cursorKey);
+      if (!prevKey) break;
+      const [prevColStr, prevRowStr] = prevKey.split(',');
+      fullPath.push({ col: parseInt(prevColStr, 10), row: parseInt(prevRowStr, 10) });
+      cursorKey = prevKey;
+    }
+    fullPath.reverse();
+
+    // Compress full path to turn-points only.
+    const turns: Position[] = [fullPath[0]];
+    for (let i = 1; i < fullPath.length - 1; i++) {
+      const prev = fullPath[i - 1];
+      const current = fullPath[i];
+      const next = fullPath[i + 1];
+      const prevDirCol = current.col - prev.col;
+      const prevDirRow = current.row - prev.row;
+      const nextDirCol = next.col - current.col;
+      const nextDirRow = next.row - current.row;
+      if (prevDirCol !== nextDirCol || prevDirRow !== nextDirRow) {
+        turns.push(current);
+      }
+    }
+    turns.push(fullPath[fullPath.length - 1]);
+
+    const withStubs = [start, startStub, ...turns.slice(1, -1), endStub, end];
+
+    // Remove consecutive duplicates and collinear noise.
+    const normalized: Position[] = [];
+    for (const point of withStubs) {
+      const last = normalized[normalized.length - 1];
+      if (last && last.col === point.col && last.row === point.row) continue;
+      normalized.push(point);
+    }
+    const compact: Position[] = [];
+    for (let i = 0; i < normalized.length; i++) {
+      const prev = compact[compact.length - 1];
+      const curr = normalized[i];
+      const next = normalized[i + 1];
+      if (prev && next) {
+        const sameCol = prev.col === curr.col && curr.col === next.col;
+        const sameRow = prev.row === curr.row && curr.row === next.row;
+        if (sameCol || sameRow) continue;
+      }
+      compact.push(curr);
+    }
+
+    return compact;
+  }, [pointKey]);
+
+  const syncConnectorLines = useCallback((list: CanvasObject[]): CanvasObject[] => {
+    const byId = new Map(list.map(obj => [obj.id, obj]));
+    return list.map(obj => {
+      if (obj.type !== 'line' || !obj.isConnector) return obj;
+      if (!obj.endPosition) return obj;
+
+      const startObj = obj.startBinding ? byId.get(obj.startBinding.objectId) : null;
+      const endObj = obj.endBinding ? byId.get(obj.endBinding.objectId) : null;
+
+      const startPos = (startObj && obj.startBinding) ? getAnchorPosition(startObj, obj.startBinding.handle) : obj.position;
+      const endPos = (endObj && obj.endBinding) ? getAnchorPosition(endObj, obj.endBinding.handle) : obj.endPosition;
+      const connectorPath = routeConnectorPath(
+        startPos,
+        endPos,
+        list,
+        obj.startBinding?.handle,
+        obj.endBinding?.handle
+      );
+
+      return {
+        ...obj,
+        position: startPos,
+        endPosition: endPos,
+        connectorPath,
+        width: Math.abs(endPos.col - startPos.col) + 1,
+        height: Math.abs(endPos.row - startPos.row) + 1,
+        rotation: undefined,
+      };
+    });
+  }, [getAnchorPosition, routeConnectorPath]);
 
   const objectsCount = objects.length;
   const canUndo = past.length > 0;
@@ -167,9 +569,12 @@ export function useCanvas(): UseCanvasReturn {
       ...obj,
       id: generateId(),
       zIndex: objects.length,
+      layerId: DEFAULT_LAYER_ID,
+      layerName: DEFAULT_LAYER_NAME,
+      layerOrder: 0,
     };
     pushHistory();
-    setObjects(prev => [...prev, newObj]);
+    setObjects(prev => normalizeStackOrder([...prev, newObj]));
     return newObj;
   }, [objects.length, ensureSpace, pushHistory]);
 
@@ -197,13 +602,14 @@ export function useCanvas(): UseCanvasReturn {
         ensureSpace(newCol + newWidth, newRow + newHeight);
       }
 
-      return prev.map(o => o.id === id ? { ...o, ...updates } : o);
+      const updated = prev.map(o => o.id === id ? { ...o, ...updates } : o);
+      return normalizeStackOrder(syncConnectorLines(updated));
     });
-  }, [ensureSpace]);
+  }, [ensureSpace, syncConnectorLines]);
 
   const deleteObject = useCallback((id: string) => {
     pushHistory();
-    setObjects(prev => prev.filter(obj => obj.id !== id));
+    setObjects(prev => normalizeStackOrder(prev.filter(obj => obj.id !== id)));
     setSelectedIds(prev => {
       const next = new Set(prev);
       next.delete(id);
@@ -214,12 +620,12 @@ export function useCanvas(): UseCanvasReturn {
   const deleteSelection = useCallback(() => {
     if (selectedIds.size === 0) return;
     pushHistory();
-    setObjects(prev => prev.filter(obj => !selectedIds.has(obj.id)));
+    setObjects(prev => normalizeStackOrder(prev.filter(obj => !selectedIds.has(obj.id))));
     setSelectedIds(new Set());
   }, [selectedIds, pushHistory]);
 
   const moveObject = useCallback((id: string, dCol: number, dRow: number) => {
-    setObjects(prev => prev.map(obj => {
+    setObjects(prev => normalizeStackOrder(syncConnectorLines(prev.map(obj => {
       if (obj.id !== id) return obj;
       const newCol = Math.max(0, obj.position.col + dCol);
       const newRow = Math.max(0, obj.position.row + dRow);
@@ -237,12 +643,12 @@ export function useCanvas(): UseCanvasReturn {
         };
       }
       return { ...obj, position: { col: newCol, row: newRow } };
-    }));
-  }, [ensureSpace]);
+    }))));
+  }, [ensureSpace, syncConnectorLines]);
 
   const moveSelection = useCallback((dCol: number, dRow: number) => {
     if (selectedIds.size === 0) return;
-    setObjects(prev => prev.map(obj => {
+    setObjects(prev => normalizeStackOrder(syncConnectorLines(prev.map(obj => {
       if (!selectedIds.has(obj.id)) return obj;
       const newCol = Math.max(0, obj.position.col + dCol);
       const newRow = Math.max(0, obj.position.row + dRow);
@@ -260,11 +666,11 @@ export function useCanvas(): UseCanvasReturn {
         };
       }
       return { ...obj, position: { col: newCol, row: newRow } };
-    }));
-  }, [selectedIds, ensureSpace]);
+    }))));
+  }, [selectedIds, ensureSpace, syncConnectorLines]);
 
   const resizeObject = useCallback((id: string, width: number, height: number) => {
-    setObjects(prev => prev.map(obj => {
+    setObjects(prev => normalizeStackOrder(syncConnectorLines(prev.map(obj => {
       if (obj.id !== id || !isResizable(obj)) return obj;
 
       if (obj.type === 'line' || obj.type === 'arrow') {
@@ -292,12 +698,13 @@ export function useCanvas(): UseCanvasReturn {
       const newHeight = Math.max(3, height);
       ensureSpace(obj.position.col + newWidth, obj.position.row + newHeight);
       return { ...obj, width: newWidth, height: newHeight };
-    }));
-  }, [ensureSpace]);
+    }))));
+  }, [ensureSpace, syncConnectorLines]);
 
   const clearAll = useCallback(() => {
     pushHistory();
     setObjects([]);
+    setLayersState([{ id: DEFAULT_LAYER_ID, name: DEFAULT_LAYER_NAME, order: 0, objectCount: 0 }]);
     setSelectedIds(new Set());
     setGridSize({ cols: INITIAL_COLS, rows: INITIAL_ROWS });
   }, [pushHistory]);
@@ -355,6 +762,12 @@ export function useCanvas(): UseCanvasReturn {
     setClipboard(objects.filter(obj => selectedIds.has(obj.id)));
   }, [selectedIds, objects]);
 
+  const cutSelection = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    setClipboard(objects.filter(obj => selectedIds.has(obj.id)));
+    deleteSelection();
+  }, [selectedIds, objects, deleteSelection]);
+
   const pasteClipboard = useCallback(() => {
     if (clipboard.length === 0) return;
     pushHistory();
@@ -377,7 +790,7 @@ export function useCanvas(): UseCanvasReturn {
       return base;
     });
 
-    setObjects(prev => [...prev, ...newObjects]);
+    setObjects(prev => normalizeStackOrder([...prev, ...newObjects]));
     setSelectedIds(newIds);
     // Update clipboard to pasted objects so subsequent paste offsets further
     setClipboard(newObjects);
@@ -406,20 +819,197 @@ export function useCanvas(): UseCanvasReturn {
       return base;
     });
 
-    setObjects(prev => [...prev, ...duplicated]);
+    setObjects(prev => normalizeStackOrder([...prev, ...duplicated]));
     setSelectedIds(newIds);
   }, [selectedIds, objects, pushHistory]);
 
+  const selectAll = useCallback(() => {
+    setSelectedIds(new Set(objects.map(obj => obj.id)));
+  }, [objects]);
+
+  const createLayerFromSelection = useCallback(() => {
+    const nextOrder = layers.length > 0 ? Math.max(...layers.map(layer => layer.order)) + 1 : 0;
+    const nextLayerName = `Layer ${nextOrder + 1}`;
+    const nextLayerId = `layer-${Date.now()}`;
+    setLayersState(prev => [
+      ...prev,
+      { id: nextLayerId, name: nextLayerName, order: nextOrder, objectCount: 0 },
+    ]);
+
+    if (selectedIds.size === 0) return;
+
+    pushHistory();
+    setObjects(prev => normalizeStackOrder(prev.map(obj => (
+      selectedIds.has(obj.id)
+        ? { ...obj, layerId: nextLayerId, layerName: nextLayerName, layerOrder: nextOrder }
+        : obj
+    ))));
+  }, [layers, pushHistory, selectedIds]);
+
+  const moveSelectionToLayer = useCallback((layerId: string) => {
+    if (selectedIds.size === 0) return;
+    const targetLayer = layers.find(layer => layer.id === layerId);
+    if (!targetLayer) return;
+    pushHistory();
+    setObjects(prev => normalizeStackOrder(prev.map(obj => (
+      selectedIds.has(obj.id)
+        ? { ...obj, layerId: targetLayer.id, layerName: targetLayer.name, layerOrder: targetLayer.order }
+        : obj
+    ))));
+  }, [layers, pushHistory, selectedIds]);
+
+  const moveObjectToLayer = useCallback((objectId: string, layerId: string) => {
+    const targetLayer = layers.find(layer => layer.id === layerId);
+    if (!targetLayer) return;
+    pushHistory();
+    setObjects(prev => normalizeStackOrder(prev.map(obj => (
+      obj.id === objectId
+        ? { ...obj, layerId: targetLayer.id, layerName: targetLayer.name, layerOrder: targetLayer.order }
+        : obj
+    ))));
+    setSelectedIds(new Set([objectId]));
+  }, [layers, pushHistory]);
+
+  const reorderObjectByDrop = useCallback((dragObjectId: string, targetObjectId: string) => {
+    if (dragObjectId === targetObjectId) return;
+    pushHistory();
+    setObjects(prev => {
+      const dragObj = prev.find(obj => obj.id === dragObjectId);
+      const targetObj = prev.find(obj => obj.id === targetObjectId);
+      if (!dragObj || !targetObj) return prev;
+
+      const sourceLayerId = dragObj.layerId ?? DEFAULT_LAYER_ID;
+      const targetLayerId = targetObj.layerId ?? DEFAULT_LAYER_ID;
+      const targetLayerName = targetObj.layerName ?? DEFAULT_LAYER_NAME;
+      const targetLayerOrder = targetObj.layerOrder ?? 0;
+
+      let updated = prev.map(obj => (
+        obj.id === dragObjectId
+          ? { ...obj, layerId: targetLayerId, layerName: targetLayerName, layerOrder: targetLayerOrder }
+          : obj
+      ));
+
+      const targetLayerObjects = updated
+        .filter(obj => (obj.layerId ?? DEFAULT_LAYER_ID) === targetLayerId)
+        .sort((a, b) => a.zIndex - b.zIndex);
+      const dragMoved = targetLayerObjects.find(obj => obj.id === dragObjectId);
+      if (!dragMoved) return prev;
+      const withoutDrag = targetLayerObjects.filter(obj => obj.id !== dragObjectId);
+      const targetIndex = withoutDrag.findIndex(obj => obj.id === targetObjectId);
+      const insertAt = targetIndex >= 0 ? targetIndex : withoutDrag.length;
+      withoutDrag.splice(insertAt, 0, dragMoved);
+
+      const zMap = new Map<string, number>();
+      withoutDrag.forEach((obj, idx) => zMap.set(obj.id, idx));
+
+      if (sourceLayerId !== targetLayerId) {
+        updated
+          .filter(obj => (obj.layerId ?? DEFAULT_LAYER_ID) === sourceLayerId)
+          .sort((a, b) => a.zIndex - b.zIndex)
+          .forEach((obj, idx) => zMap.set(obj.id, idx));
+      }
+
+      updated = updated.map(obj => (
+        zMap.has(obj.id) ? { ...obj, zIndex: zMap.get(obj.id)! } : obj
+      ));
+
+      return normalizeStackOrder(updated);
+    });
+    setSelectedIds(new Set([dragObjectId]));
+  }, [pushHistory]);
+
+  const renameLayer = useCallback((layerId: string, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const targetLayer = layers.find(layer => layer.id === layerId);
+    if (!targetLayer || targetLayer.name === trimmed) return;
+    setLayersState(prev => prev.map(layer => (
+      layer.id === layerId ? { ...layer, name: trimmed } : layer
+    )));
+
+    pushHistory();
+    setObjects(prev => normalizeStackOrder(prev.map(obj => (
+      (obj.layerId ?? DEFAULT_LAYER_ID) === layerId
+        ? { ...obj, layerName: trimmed }
+        : obj
+    ))));
+  }, [layers, pushHistory]);
+
+  const reorderLayer = useCallback((dragLayerId: string, targetLayerId: string) => {
+    if (dragLayerId === targetLayerId) return;
+    const orderedLayers = [...layers].sort((a, b) => a.order - b.order);
+    const fromIndex = orderedLayers.findIndex(layer => layer.id === dragLayerId);
+    const toIndex = orderedLayers.findIndex(layer => layer.id === targetLayerId);
+    if (fromIndex < 0 || toIndex < 0) return;
+
+    const reordered = [...orderedLayers];
+    const [moved] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, moved);
+    const orderMap = new Map<string, number>(reordered.map((layer, order) => [layer.id, order]));
+
+    setLayersState(prev => prev.map(layer => ({
+      ...layer,
+      order: orderMap.get(layer.id) ?? layer.order,
+    })));
+
+    pushHistory();
+    setObjects(prev => normalizeStackOrder(prev.map(obj => ({
+      ...obj,
+      layerOrder: orderMap.get(obj.layerId ?? DEFAULT_LAYER_ID) ?? (obj.layerOrder ?? 0),
+    })), orderMap));
+  }, [layers, pushHistory]);
+
+  const arrangeSelectionLayer = useCallback((mode: 'toFront' | 'forward' | 'backward' | 'toBack') => {
+    if (selectedIds.size === 0) return;
+    const selected = objects.filter(obj => selectedIds.has(obj.id)).sort(compareObjectsByStackOrder);
+    if (selected.length === 0) return;
+    const selectedLayerId = selected[0].layerId ?? DEFAULT_LAYER_ID;
+    const orderedLayers = [...layers].sort((a, b) => a.order - b.order);
+    const index = orderedLayers.findIndex(layer => layer.id === selectedLayerId);
+    if (index < 0) return;
+
+    let targetIndex = index;
+    if (mode === 'toFront') targetIndex = orderedLayers.length - 1;
+    if (mode === 'toBack') targetIndex = 0;
+    if (mode === 'forward') targetIndex = Math.min(orderedLayers.length - 1, index + 1);
+    if (mode === 'backward') targetIndex = Math.max(0, index - 1);
+    if (targetIndex === index) return;
+
+    const reordered = [...orderedLayers];
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(targetIndex, 0, moved);
+    const orderMap = new Map<string, number>(reordered.map((layer, order) => [layer.id, order]));
+    setLayersState(prev => prev.map(layer => ({
+      ...layer,
+      order: orderMap.get(layer.id) ?? layer.order,
+    })));
+
+    pushHistory();
+    setObjects(prev => normalizeStackOrder(prev.map(obj => ({
+      ...obj,
+      layerOrder: orderMap.get(obj.layerId ?? DEFAULT_LAYER_ID) ?? (obj.layerOrder ?? 0),
+    }))));
+  }, [layers, objects, pushHistory, selectedIds]);
+
   // --- Load objects (for share URL) ---
   const loadObjects = useCallback((objs: CanvasObject[]) => {
-    setObjects(objs);
+    const normalized = normalizeStackOrder(syncConnectorLines(objs));
+    setObjects(normalized);
+    const loadedLayers = buildLayers(normalized)
+      .sort((a, b) => a.order - b.order)
+      .map((layer, order) => ({ ...layer, order }));
+    setLayersState(
+      loadedLayers.length > 0
+        ? loadedLayers
+        : [{ id: DEFAULT_LAYER_ID, name: DEFAULT_LAYER_NAME, order: 0, objectCount: 0 }]
+    );
     setSelectedIds(new Set());
     setPast([]);
     setFuture([]);
     // Auto-expand grid to fit loaded objects
     const fitted = calculateGridSize(objs, { cols: INITIAL_COLS, rows: INITIAL_ROWS });
     setGridSize(fitted);
-  }, []);
+  }, [syncConnectorLines]);
 
   const handleCellMouseDown = useCallback((col: number, row: number, resizeHandle?: ResizeHandle | null) => {
     setCursor({ col, row });
@@ -440,7 +1030,7 @@ export function useCanvas(): UseCanvasReturn {
       ensureSpace(col + 50, row + 30);
       pushHistory();
       const newObj = createDefaultObject('component', col, row, { componentType: pendingComponent, zIndex: objects.length });
-      setObjects(prev => [...prev, newObj]);
+      setObjects(prev => normalizeStackOrder([...prev, newObj]));
       setSelectedIds(new Set([newObj.id]));
       setPendingComponent(null);
       setTool(TOOLS.SELECT);
@@ -456,7 +1046,9 @@ export function useCanvas(): UseCanvasReturn {
           pushHistory();
           setDragState({ type: 'resizing', objectId: hit.id, handle: handle as ResizeHandle });
         } else {
-          selectObject(hit.id);
+          if (!selectedIds.has(hit.id)) {
+            selectObject(hit.id);
+          }
           const bbox = getBoundingBox(hit);
           pushHistory();
           setDragState({
@@ -474,8 +1066,16 @@ export function useCanvas(): UseCanvasReturn {
       return;
     }
 
-    // Start drawing box/line/arrow
-    if (tool === TOOLS.BOX || tool === TOOLS.LINE || tool === TOOLS.ARROW) {
+    // Start drawing box/line/arrow/connector
+    if (tool === TOOLS.BOX || tool === TOOLS.LINE || tool === TOOLS.ARROW || tool === TOOLS.CONNECTOR) {
+      if (tool === TOOLS.CONNECTOR) {
+        const anchor = getConnectorAnchor(col, row);
+        if (!anchor) return;
+        setConnectorStartAnchor(anchor);
+        setCursor(anchor.position);
+        setDragState({ type: 'drawing', startCol: anchor.position.col, startRow: anchor.position.row, tool });
+        return;
+      }
       setDragState({ type: 'drawing', startCol: col, startRow: row, tool });
       return;
     }
@@ -486,17 +1086,22 @@ export function useCanvas(): UseCanvasReturn {
       pushHistory();
       const newObj = createDefaultObject('text', col, row, { zIndex: objects.length, content: '' });
       flushSync(() => {
-        setObjects(prev => [...prev, newObj]);
+        setObjects(prev => normalizeStackOrder([...prev, newObj]));
         setSelectedIds(new Set([newObj.id]));
       });
       setEditingObjectId(newObj.id);
       setTool(TOOLS.SELECT);
       return;
     }
-  }, [tool, objects, selectedIds, pendingComponent, selectObject, clearSelection, objects.length, ensureSpace, pushHistory]);
+  }, [tool, objects, selectedIds, pendingComponent, selectObject, clearSelection, objects.length, ensureSpace, pushHistory, getConnectorAnchor]);
 
   const handleCellMouseMove = useCallback((col: number, row: number) => {
-    setCursor({ col, row });
+    if (dragState.type === 'drawing' && dragState.tool === TOOLS.CONNECTOR) {
+      // Keep preview visible like line tool while dragging connector.
+      setCursor({ col, row });
+    } else {
+      setCursor({ col, row });
+    }
 
     // Update marquee
     if (marquee) {
@@ -508,27 +1113,39 @@ export function useCanvas(): UseCanvasReturn {
       const newCol = Math.max(0, col - dragState.offsetCol);
       const newRow = Math.max(0, row - dragState.offsetRow);
 
-      setObjects(prev => prev.map(obj => {
-        if (obj.id !== dragState.objectId) return obj;
-        const dCol = newCol - obj.position.col;
-        const dRow = newRow - obj.position.row;
+      setObjects(prev => {
+        const movingSelection = selectedIds.has(dragState.objectId) && selectedIds.size > 1;
+        const movingIds = movingSelection ? selectedIds : new Set([dragState.objectId]);
+        const anchor = prev.find(obj => obj.id === dragState.objectId);
+        if (!anchor) return prev;
+        const anchorBox = getBoundingBox(anchor);
+        const dCol = newCol - anchorBox.col;
+        const dRow = newRow - anchorBox.row;
 
-        ensureSpace(newCol + obj.width, newRow + obj.height);
+        const moved = prev.map(obj => {
+          if (!movingIds.has(obj.id)) return obj;
+          const nextCol = Math.max(0, obj.position.col + dCol);
+          const nextRow = Math.max(0, obj.position.row + dRow);
+          ensureSpace(nextCol + obj.width, nextRow + obj.height);
 
-        if (obj.endPosition) {
-          return {
-            ...obj,
-            position: { col: newCol, row: newRow },
-            endPosition: {
-              col: obj.endPosition.col + dCol,
-              row: obj.endPosition.row + dRow
-            }
-          };
-        }
-        return { ...obj, position: { col: newCol, row: newRow } };
-      }));
+          if (obj.endPosition) {
+            return {
+              ...obj,
+              position: { col: nextCol, row: nextRow },
+              endPosition: {
+                col: obj.endPosition.col + dCol,
+                row: obj.endPosition.row + dRow,
+              },
+            };
+          }
+
+          return { ...obj, position: { col: nextCol, row: nextRow } };
+        });
+
+        return normalizeStackOrder(syncConnectorLines(moved));
+      });
     } else if (dragState.type === 'resizing' && dragState.objectId) {
-      setObjects(prev => prev.map(obj => {
+      setObjects(prev => normalizeStackOrder(syncConnectorLines(prev.map(obj => {
         if (obj.id !== dragState.objectId) return obj;
 
         // Skip text objects
@@ -536,6 +1153,38 @@ export function useCanvas(): UseCanvasReturn {
 
         // Handle line/arrow resizing - support all corner handles (nw, ne, sw, se)
         if (obj.type === 'line' || obj.type === 'arrow') {
+          if (obj.type === 'line' && obj.isConnector) {
+            const movingStart = dragState.handle === 'nw';
+            const anchor = getConnectorAnchorForEdit(col, row, obj.id);
+            if (!anchor) return obj;
+
+            if (movingStart) {
+              if (obj.endBinding && anchor.objectId === obj.endBinding.objectId && anchor.handle === obj.endBinding.handle) {
+                return obj;
+              }
+              return {
+                ...obj,
+                position: anchor.position,
+                startBinding: { objectId: anchor.objectId, handle: anchor.handle },
+                width: obj.endPosition ? Math.abs(obj.endPosition.col - anchor.position.col) + 1 : obj.width,
+                height: obj.endPosition ? Math.abs(obj.endPosition.row - anchor.position.row) + 1 : obj.height,
+                rotation: undefined,
+              };
+            }
+
+            if (obj.startBinding && anchor.objectId === obj.startBinding.objectId && anchor.handle === obj.startBinding.handle) {
+              return obj;
+            }
+            return {
+              ...obj,
+              endPosition: anchor.position,
+              endBinding: { objectId: anchor.objectId, handle: anchor.handle },
+              width: Math.abs(anchor.position.col - obj.position.col) + 1,
+              height: Math.abs(anchor.position.row - obj.position.row) + 1,
+              rotation: undefined,
+            };
+          }
+
           const cornerHandles = ['nw', 'ne', 'sw', 'se'] as const;
           if (!cornerHandles.includes(dragState.handle as typeof cornerHandles[number])) return obj;
 
@@ -635,9 +1284,9 @@ export function useCanvas(): UseCanvasReturn {
 
         ensureSpace(newCol + newWidth, newRow + newHeight);
         return { ...obj, position: { col: newCol, row: newRow }, width: newWidth, height: newHeight };
-      }));
+      }))));
     }
-  }, [dragState, ensureSpace, marquee]);
+  }, [dragState, ensureSpace, marquee, getConnectorAnchor, getConnectorAnchorForEdit, syncConnectorLines]);
 
   const handleCellMouseUp = useCallback(() => {
     // Finalize marquee selection
@@ -684,7 +1333,7 @@ export function useCanvas(): UseCanvasReturn {
         const newObj = createDefaultObject('box', col, row, { zIndex: objects.length });
         newObj.width = width;
         newObj.height = height;
-        setObjects(prev => [...prev, newObj]);
+        setObjects(prev => normalizeStackOrder([...prev, newObj]));
         setSelectedIds(new Set([newObj.id]));
         setTool(TOOLS.SELECT);
       } else if (tool === TOOLS.LINE && isValidLine) {
@@ -694,7 +1343,7 @@ export function useCanvas(): UseCanvasReturn {
         newObj.endPosition = { col: endCol, row: endRow };
         newObj.width = Math.abs(endCol - startCol) + 1;
         newObj.height = Math.abs(endRow - startRow) + 1;
-        setObjects(prev => [...prev, newObj]);
+        setObjects(prev => normalizeStackOrder([...prev, newObj]));
         setSelectedIds(new Set([newObj.id]));
         setTool(TOOLS.SELECT);
       } else if (tool === TOOLS.ARROW && isValidLine) {
@@ -704,14 +1353,31 @@ export function useCanvas(): UseCanvasReturn {
         newObj.endPosition = { col: endCol, row: endRow };
         newObj.width = Math.abs(endCol - startCol) + 1;
         newObj.height = Math.abs(endRow - startRow) + 1;
-        setObjects(prev => [...prev, newObj]);
+        setObjects(prev => normalizeStackOrder([...prev, newObj]));
         setSelectedIds(new Set([newObj.id]));
         setTool(TOOLS.SELECT);
+      } else if (tool === TOOLS.CONNECTOR && connectorStartAnchor) {
+        const endAnchor = getConnectorAnchor(endCol, endRow);
+        if (endAnchor && (endAnchor.objectId !== connectorStartAnchor.objectId || endAnchor.handle !== connectorStartAnchor.handle)) {
+          ensureSpace(Math.max(startCol, endAnchor.position.col) + EXPAND_MARGIN, Math.max(startRow, endAnchor.position.row) + EXPAND_MARGIN);
+          pushHistory();
+          const newObj = createDefaultObject('line', startCol, startRow, { zIndex: objects.length });
+          newObj.isConnector = true;
+          newObj.startBinding = { objectId: connectorStartAnchor.objectId, handle: connectorStartAnchor.handle };
+          newObj.endBinding = { objectId: endAnchor.objectId, handle: endAnchor.handle };
+          newObj.endPosition = { col: endAnchor.position.col, row: endAnchor.position.row };
+          newObj.width = Math.abs(endAnchor.position.col - startCol) + 1;
+          newObj.height = Math.abs(endAnchor.position.row - startRow) + 1;
+          setObjects(prev => normalizeStackOrder(syncConnectorLines([...prev, newObj])));
+          setSelectedIds(new Set([newObj.id]));
+          setTool(TOOLS.SELECT);
+        }
       }
     }
 
     setDragState({ type: 'none' });
-  }, [dragState, cursor, tool, objects, ensureSpace, pushHistory, marquee]);
+    setConnectorStartAnchor(null);
+  }, [dragState, cursor, tool, objects, ensureSpace, pushHistory, marquee, connectorStartAnchor, getConnectorAnchor, syncConnectorLines]);
 
   const handleKeyDown = useCallback((key: string) => {
     if (selectedIds.size > 0) {
@@ -811,6 +1477,7 @@ export function useCanvas(): UseCanvasReturn {
     editingObjectId,
     setEditingObjectId,
     marquee,
+    layers,
     addObject,
     updateObject,
     deleteObject,
@@ -835,8 +1502,17 @@ export function useCanvas(): UseCanvasReturn {
     canUndo,
     canRedo,
     copySelection,
+    cutSelection,
     pasteClipboard,
     duplicateSelection,
+    selectAll,
+    createLayerFromSelection,
+    moveSelectionToLayer,
+    moveObjectToLayer,
+    reorderObjectByDrop,
+    renameLayer,
+    reorderLayer,
+    arrangeSelectionLayer,
     selectedObjects,
     objectsCount,
     cursor,

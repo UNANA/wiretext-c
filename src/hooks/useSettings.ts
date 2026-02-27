@@ -5,10 +5,12 @@ import { COMPONENT_DEFS } from '../types';
 const STORAGE_KEY = 'wiretext-settings';
 
 type ComponentVisibility = Record<ComponentType, boolean>;
+type Theme = 'dark' | 'light';
 
 interface Settings {
     visibleComponents: ComponentVisibility;
     sidebarCollapsed: boolean;
+    theme: Theme;
 }
 
 const DEFAULT_VISIBLE: Set<ComponentType> = new Set([
@@ -38,6 +40,7 @@ function getDefaultSettings(): Settings {
     return {
         visibleComponents: getDefaultVisibility(),
         sidebarCollapsed: false,
+        theme: 'dark',
     };
 }
 
@@ -53,6 +56,7 @@ function loadSettings(): Settings {
                     ...(parsed.visibleComponents || {}),
                 },
                 sidebarCollapsed: parsed.sidebarCollapsed ?? false,
+                theme: parsed.theme === 'light' ? 'light' : 'dark',
             };
         }
     } catch {
@@ -114,13 +118,22 @@ export function useSettings() {
         }));
     }, []);
 
+    const setTheme = useCallback((theme: Theme) => {
+        setSettings((prev) => ({
+            ...prev,
+            theme,
+        }));
+    }, []);
+
     return {
         visibleComponents: settings.visibleComponents,
         sidebarCollapsed: settings.sidebarCollapsed,
+        theme: settings.theme,
         toggleComponent,
         showAll,
         hideAll,
         resetDefaults,
         toggleSidebar,
+        setTheme,
     };
 }

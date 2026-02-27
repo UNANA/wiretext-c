@@ -5,7 +5,6 @@ interface PropertiesPanelProps {
   tool: Tool;
   cursor: Position;
   selectedObjects: CanvasObject[];
-  objects: CanvasObject[];
   objectsCount: number;
   onUpdateObject?: (id: string, updates: Partial<CanvasObject>) => void;
 }
@@ -26,7 +25,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   tool,
   cursor,
   selectedObjects,
-  objects,
   objectsCount,
   onUpdateObject,
 }) => {
@@ -36,10 +34,11 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     text: 'Text',
     line: 'Line',
     arrow: 'Arrow',
+    connector: 'Connector',
   };
 
   return (
-    <div className="flex w-64 flex-col border-l border-border bg-surface p-3 overflow-y-auto select-none">
+    <div className="flex h-full flex-col bg-surface p-3 overflow-y-auto select-none">
       <h3 className="text-2xs text-text-dim uppercase tracking-wider mb-3">Properties</h3>
 
       <div className="space-y-3 text-xs">
@@ -63,7 +62,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             <div className="h-px bg-border my-2" />
             <SingleObjectProperties
               obj={selectedObjects[0]}
-              objects={objects}
               onUpdateObject={onUpdateObject}
             />
           </>
@@ -77,6 +75,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             </div>
           </>
         )}
+
       </div>
     </div>
   );
@@ -84,13 +83,11 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
 interface SingleObjectPropertiesProps {
   obj: CanvasObject;
-  objects: CanvasObject[];
   onUpdateObject: (id: string, updates: Partial<CanvasObject>) => void;
 }
 
 const SingleObjectProperties: React.FC<SingleObjectPropertiesProps> = ({
   obj,
-  objects,
   onUpdateObject,
 }) => {
   // Real-time updates - no local state needed, update parent directly
@@ -101,7 +98,7 @@ const SingleObjectProperties: React.FC<SingleObjectPropertiesProps> = ({
   const isText = obj.type === 'text';
   const isLine = obj.type === 'line';
   const isArrow = obj.type === 'arrow';
-  const canRotate = isLine || isArrow;
+  const canRotate = (isLine && !obj.isConnector) || isArrow;
   const isCheckbox = obj.componentType === 'checkbox';
   const isRadio = obj.componentType === 'radio';
   const isProgress = obj.componentType === 'progress';
@@ -183,44 +180,9 @@ const SingleObjectProperties: React.FC<SingleObjectPropertiesProps> = ({
         </div>
       </div>
 
-      {/* Z-Index & Layer Order */}
-      <div>
-        <label className="block text-2xs text-text-dim mb-1">Z-Index</label>
-        <div className="flex gap-2 items-center mb-2">
-          <input
-            type="number"
-            value={obj.zIndex}
-            onChange={(e) => {
-              const v = parseInt(e.target.value);
-              if (!isNaN(v)) onUpdateObject(obj.id, { zIndex: v });
-            }}
-            className="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
-          />
-        </div>
-        <div className="flex gap-1">
-          <button
-            onClick={() => {
-              const others = objects.filter((o) => o.id !== obj.id);
-              const maxZ = others.length > 0 ? Math.max(...others.map((o) => o.zIndex)) : obj.zIndex;
-              onUpdateObject(obj.id, { zIndex: maxZ + 1 });
-            }}
-            className="flex-1 py-1 px-2 rounded text-sm bg-surface-hover text-text-dim hover:text-text transition-colors"
-            title="Bring to front"
-          >
-            ↑
-          </button>
-          <button
-            onClick={() => {
-              const others = objects.filter((o) => o.id !== obj.id);
-              const minZ = others.length > 0 ? Math.min(...others.map((o) => o.zIndex)) : obj.zIndex;
-              onUpdateObject(obj.id, { zIndex: minZ - 1 });
-            }}
-            className="flex-1 py-1 px-2 rounded text-sm bg-surface-hover text-text-dim hover:text-text transition-colors"
-            title="Bring to back"
-          >
-            ↓
-          </button>
-        </div>
+      <div className="flex justify-between items-center">
+        <span className="text-text-dim">Layer</span>
+        <span className="text-text">{obj.layerName || 'Layer 1'}</span>
       </div>
 
       {/* Rotation - for lines/arrows (full 360° + continuous rotation) */}

@@ -5,20 +5,28 @@ interface AboutModalProps {
 }
 
 const SHORTCUTS = [
-  { keys: 'V', action: 'Select tool' },
-  { keys: 'B', action: 'Box tool' },
-  { keys: 'T', action: 'Text tool' },
-  { keys: 'L', action: 'Line tool' },
-  { keys: 'A', action: 'Arrow tool' },
+  { keys: 'V', action: 'Select' },
+  { keys: 'B', action: 'Box' },
+  { keys: 'T', action: 'Text' },
+  { keys: 'L', action: 'Line' },
+  { keys: 'A', action: 'Arrow' },
+  { keys: 'C', action: 'Connector' },
   { keys: 'P', action: 'Toggle sidebar' },
-  { keys: 'Delete / Backspace', action: 'Delete selection' },
-  { keys: 'Arrow keys', action: 'Nudge selected objects' },
-  { keys: 'Ctrl/Cmd + C', action: 'Copy selection' },
-  { keys: 'Ctrl/Cmd + V', action: 'Paste clipboard' },
-  { keys: 'Ctrl/Cmd + D', action: 'Duplicate selection' },
-  { keys: 'Ctrl/Cmd + Z', action: 'Undo' },
-  { keys: 'Ctrl/Cmd + Shift + Z', action: 'Redo' },
   { keys: 'Esc', action: 'Return to Select tool' },
+  { keys: '↑ ↓ ← →', action: 'Nudge selected objects' },
+  { keys: 'Delete / ⌫', action: 'Delete selection' },
+  { keys: '⌘X', action: 'Cut' },
+  { keys: '⌘V', action: 'Paste' },
+  { keys: '⌘A', action: 'Select all' },
+  { keys: '⌘G', action: 'Group / Ungroup' },
+  { keys: '⌘Z', action: 'Undo' },
+  { keys: '⇧⌘Z', action: 'Redo' },
+  { keys: '⌘C', action: 'Copy' },
+  { keys: '⌘D', action: 'Duplicate' },
+  { keys: '[ / ]', action: 'Reorder' },
+  { keys: '⌘[', action: 'Send to back' },
+  { keys: '⌘]', action: 'Bring to front' },
+  { keys: '⌘E', action: 'Export' },
 ];
 
 const AboutModal: React.FC<AboutModalProps> = ({ onClose }) => {
@@ -32,23 +40,25 @@ const AboutModal: React.FC<AboutModalProps> = ({ onClose }) => {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-sm"
       onClick={(e) => e.target === e.currentTarget && onClose()}
       role="dialog"
       aria-modal="true"
       aria-label="About WireText"
     >
-      <div className="w-full max-w-lg overflow-hidden rounded-lg border border-border bg-surface shadow-2xl">
-        <div className="flex items-center justify-between border-b border-border px-5 py-3">
-          <div>
-            <h2 className="text-sm font-semibold text-text">About WireText</h2>
-            <p className="mt-0.5 text-2xs text-text-dim">
-              Unicode wireframe design tool
-            </p>
+      <div className="w-full max-w-lg overflow-hidden rounded border border-border bg-surface shadow-2xl">
+        <div className="flex items-start justify-between px-5 py-4">
+          <div className="pr-4">
+            <h2 className="text-2xl leading-none text-text">
+              <span className="mr-2 text-text-dim">⌜</span>
+              Wiretext
+              <span className="ml-2 text-text-dim">⌝</span>
+            </h2>
+            <p className="mt-2 text-xs text-text-dim">Unicode wireframe design tool</p>
           </div>
           <button
             onClick={onClose}
-            className="px-1 text-lg leading-none text-text-dim hover:text-text"
+            className="px-1 text-base leading-none text-text-dim transition-colors hover:text-text"
             type="button"
             aria-label="Close About dialog"
           >
@@ -56,39 +66,33 @@ const AboutModal: React.FC<AboutModalProps> = ({ onClose }) => {
           </button>
         </div>
 
-        <div className="max-h-[60vh] space-y-4 overflow-y-auto px-5 py-4">
-          <p className="text-xs text-text-dim">
+        <div className="border-y border-border px-5 py-4">
+          <p className="text-xs leading-6 text-text-dim">
             Build low-fidelity wireframes quickly with ASCII/Unicode drawing tools.
             Create boxes, text, connectors, and common UI components directly on a
             grid canvas.
           </p>
+        </div>
 
-          <div>
-            <div className="mb-2 text-2xs uppercase tracking-wider text-text-dim">
-              Keyboard Shortcuts
-            </div>
-            <div className="space-y-1">
-              {SHORTCUTS.map((shortcut) => (
-                <div
-                  key={shortcut.keys}
-                  className="flex items-center justify-between rounded border border-border bg-bg px-2.5 py-1.5 text-xs"
-                >
-                  <span className="text-text">{shortcut.action}</span>
-                  <span className="font-mono text-text-dim">{shortcut.keys}</span>
-                </div>
-              ))}
-            </div>
+        <div className="px-5 py-4">
+          <div className="mb-3 text-2xs uppercase tracking-wider text-text-dim">
+            Keyboard Shortcuts
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+            {SHORTCUTS.map((shortcut) => (
+              <div key={`${shortcut.keys}-${shortcut.action}`} className="flex items-center gap-2 text-xs text-text-dim">
+                <span className="inline-flex min-w-6 items-center justify-center rounded border border-border bg-bg px-1.5 py-0.5 text-2xs text-text">
+                  {shortcut.keys}
+                </span>
+                <span>{shortcut.action}</span>
+              </div>
+            ))}
           </div>
         </div>
 
-        <div className="flex justify-end border-t border-border px-5 py-3">
-          <button
-            onClick={onClose}
-            className="rounded border border-accent bg-accent px-3 py-1.5 text-xs text-bg transition-colors hover:opacity-90"
-            type="button"
-          >
-            Close
-          </button>
+        <div className="flex items-center justify-between border-t border-border px-3 py-2 text-2xs text-text-dim">
+          <span>v1.0.0</span>
+          <span aria-hidden>└────────┘</span>
         </div>
       </div>
     </div>

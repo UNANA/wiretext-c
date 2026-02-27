@@ -1,12 +1,30 @@
 import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import type { Grid, Position, CanvasObject, DragState, ResizeHandle, Tool } from '../types';
-import { getLineLength } from '../utils/boxDrawing';
+import { compareObjectsByStackOrder, getLineLength, hitTest } from '../utils/boxDrawing';
 import type { MarqueeState } from '../hooks/useCanvas';
 
 // Helper to get line bounding box for selection display
 function getLineBoundingBox(obj: CanvasObject): { col: number; row: number; width: number; height: number } {
   if ((obj.type !== 'line' && obj.type !== 'arrow')) {
     return { col: obj.position.col, row: obj.position.row, width: obj.width, height: obj.height };
+  }
+  if (obj.type === 'line' && obj.isConnector && obj.connectorPath && obj.connectorPath.length > 0) {
+    let minCol = Number.POSITIVE_INFINITY;
+    let minRow = Number.POSITIVE_INFINITY;
+    let maxCol = Number.NEGATIVE_INFINITY;
+    let maxRow = Number.NEGATIVE_INFINITY;
+    for (const point of obj.connectorPath) {
+      minCol = Math.min(minCol, point.col);
+      minRow = Math.min(minRow, point.row);
+      maxCol = Math.max(maxCol, point.col);
+      maxRow = Math.max(maxRow, point.row);
+    }
+    return {
+      col: minCol,
+      row: minRow,
+      width: maxCol - minCol + 1,
+      height: maxRow - minRow + 1,
+    };
   }
 
   // Calculate end position from rotation if specified, otherwise use endPosition
@@ -36,6 +54,7 @@ function getLineBoundingBox(obj: CanvasObject): { col: number; row: number; widt
 interface CanvasProps {
   grid: Grid;
   objects: CanvasObject[];
+  tool: Tool;
   selectedIds: Set<string>;
   dragState: DragState;
   zoom: number;
@@ -51,6 +70,7 @@ interface CanvasProps {
   onUpdateObject?: (id: string, updates: Partial<CanvasObject>) => void;
   marquee?: MarqueeState | null;
   panViewport?: (dx: number, dy: number) => void;
+  onCanvasContextMenu?: (x: number, y: number, onSelection: boolean) => void;
 }
 
 const HANDLE_SIZE = 7;
@@ -76,6 +96,7 @@ function useCharMetrics(zoom: number) {
 const Canvas: React.FC<CanvasProps> = ({
   grid,
   objects,
+  tool,
   selectedIds,
   dragState,
   zoom,
@@ -91,6 +112,7 @@ const Canvas: React.FC<CanvasProps> = ({
   onUpdateObject,
   marquee,
   panViewport,
+  onCanvasContextMenu,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -165,6 +187,14 @@ const Canvas: React.FC<CanvasProps> = ({
     handleCellMouseUp();
   }, [handleCellMouseUp]);
 
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const pos = screenToGrid(e.clientX, e.clientY);
+    const hit = hitTest(objects, pos.col, pos.row);
+    const onSelection = !!hit && selectedIds.has(hit.id);
+    onCanvasContextMenu?.(e.clientX, e.clientY, onSelection);
+  }, [screenToGrid, objects, selectedIds, onCanvasContextMenu]);
+
   // Attach to window so drag continues when cursor leaves canvas
   useEffect(() => {
     if (isDragging || isPanning) {
@@ -204,8 +234,31 @@ const Canvas: React.FC<CanvasProps> = ({
   const selectedObjects = useMemo(() => {
     return objects
       .filter(obj => selectedIds.has(obj.id))
-      .sort((a, b) => a.zIndex - b.zIndex);
+      .sort(compareObjectsByStackOrder);
   }, [objects, selectedIds]);
+
+  const connectorAnchors = useMemo(() => {
+    if (tool !== 'connector') return [];
+    return objects
+      .filter(obj => obj.type === 'component' || obj.type === 'box')
+      .flatMap(obj => {
+        const col = obj.position.col;
+        const row = obj.position.row;
+        const { width, height } = obj;
+        const midCol = col + Math.floor(width / 2);
+        const midRow = row + Math.floor(height / 2);
+        return [
+          { key: `${obj.id}-nw`, col, row },
+          { key: `${obj.id}-n`, col: midCol, row },
+          { key: `${obj.id}-ne`, col: col + width - 1, row },
+          { key: `${obj.id}-e`, col: col + width - 1, row: midRow },
+          { key: `${obj.id}-se`, col: col + width - 1, row: row + height - 1 },
+          { key: `${obj.id}-s`, col: midCol, row: row + height - 1 },
+          { key: `${obj.id}-sw`, col, row: row + height - 1 },
+          { key: `${obj.id}-w`, col, row: midRow },
+        ];
+      });
+  }, [tool, objects]);
 
   // Drawing preview
   const isDrawing = dragState.type === 'drawing';
@@ -228,28 +281,149 @@ const Canvas: React.FC<CanvasProps> = ({
     };
   }, [isDrawing, drawingTool, dragState, cursor, charWidth, lineHeight, zoom, panX, panY]);
 
-  // Line/Arrow drawing preview (line from start to cursor)
-  const linePreview = useMemo(() => {
-    if (!isDrawing || (drawingTool !== 'line' && drawingTool !== 'arrow')) return null;
-    const { startCol, startRow } = dragState as { startCol: number; startRow: number };
-    const startX = startCol * charWidth * zoom + panX + charWidth * zoom / 2;
-    const startY = startRow * lineHeight * zoom + panY + lineHeight * zoom / 2;
-    const endX = cursor.col * charWidth * zoom + panX + charWidth * zoom / 2;
-    const endY = cursor.row * lineHeight * zoom + panY + lineHeight * zoom / 2;
+  const routeConnectorPreviewPath = useCallback((start: Position, end: Position): Position[] => {
+    if (start.col === end.col && start.row === end.row) return [start, end];
 
-    const dx = endX - startX;
-    const dy = endY - startY;
-    const length = Math.sqrt(dx * dx + dy * dy);
-    const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+    const pointKey = (col: number, row: number) => `${col},${row}`;
+    const obstacleCells = new Set<string>();
+    const blockerObjects = objects.filter(obj => obj.type === 'box' || obj.type === 'component' || obj.type === 'text');
+
+    for (const obj of blockerObjects) {
+      const bbox = getLineBoundingBox(obj);
+      const minCol = Math.max(0, bbox.col - 1);
+      const minRow = Math.max(0, bbox.row - 1);
+      const maxCol = bbox.col + bbox.width;
+      const maxRow = bbox.row + bbox.height;
+      for (let c = minCol; c <= maxCol; c++) {
+        for (let r = minRow; r <= maxRow; r++) {
+          obstacleCells.add(pointKey(c, r));
+        }
+      }
+    }
+
+    obstacleCells.delete(pointKey(start.col, start.row));
+    obstacleCells.delete(pointKey(end.col, end.row));
+
+    const extraPad = 25;
+    const minCol = Math.max(0, Math.min(start.col, end.col) - extraPad);
+    const minRow = Math.max(0, Math.min(start.row, end.row) - extraPad);
+    const maxCol = Math.max(start.col, end.col) + extraPad;
+    const maxRow = Math.max(start.row, end.row) + extraPad;
+
+    const queue: Position[] = [start];
+    const visited = new Set<string>([pointKey(start.col, start.row)]);
+    const parent = new Map<string, string>();
+    const dirs = [
+      { dc: 1, dr: 0 },
+      { dc: -1, dr: 0 },
+      { dc: 0, dr: 1 },
+      { dc: 0, dr: -1 },
+    ];
+
+    let found = false;
+    while (queue.length > 0 && !found) {
+      const current = queue.shift()!;
+      for (const dir of dirs) {
+        const nextCol = current.col + dir.dc;
+        const nextRow = current.row + dir.dr;
+        if (nextCol < minCol || nextCol > maxCol || nextRow < minRow || nextRow > maxRow) continue;
+        const nextKey = pointKey(nextCol, nextRow);
+        if (visited.has(nextKey) || obstacleCells.has(nextKey)) continue;
+        visited.add(nextKey);
+        parent.set(nextKey, pointKey(current.col, current.row));
+        if (nextCol === end.col && nextRow === end.row) {
+          found = true;
+          break;
+        }
+        queue.push({ col: nextCol, row: nextRow });
+      }
+    }
+
+    if (!found) {
+      if (start.col === end.col || start.row === end.row) return [start, end];
+      return [start, { col: end.col, row: start.row }, end];
+    }
+
+    const fullPath: Position[] = [];
+    let cursorKey = pointKey(end.col, end.row);
+    fullPath.push(end);
+    while (cursorKey !== pointKey(start.col, start.row)) {
+      const prevKey = parent.get(cursorKey);
+      if (!prevKey) break;
+      const [prevColStr, prevRowStr] = prevKey.split(',');
+      fullPath.push({ col: parseInt(prevColStr, 10), row: parseInt(prevRowStr, 10) });
+      cursorKey = prevKey;
+    }
+    fullPath.reverse();
+
+    const turns: Position[] = [fullPath[0]];
+    for (let i = 1; i < fullPath.length - 1; i++) {
+      const prev = fullPath[i - 1];
+      const current = fullPath[i];
+      const next = fullPath[i + 1];
+      const prevDirCol = current.col - prev.col;
+      const prevDirRow = current.row - prev.row;
+      const nextDirCol = next.col - current.col;
+      const nextDirRow = next.row - current.row;
+      if (prevDirCol !== nextDirCol || prevDirRow !== nextDirRow) {
+        turns.push(current);
+      }
+    }
+    turns.push(fullPath[fullPath.length - 1]);
+    return turns;
+  }, [objects]);
+
+  // Line/Arrow/Connector drawing preview
+  const linePreview = useMemo(() => {
+    if (!isDrawing || (drawingTool !== 'line' && drawingTool !== 'arrow' && drawingTool !== 'connector')) return null;
+    const { startCol, startRow } = dragState as { startCol: number; startRow: number };
+    const toScreen = (col: number, row: number) => ({
+      x: col * charWidth * zoom + panX + charWidth * zoom / 2,
+      y: row * lineHeight * zoom + panY + lineHeight * zoom / 2,
+    });
+
+    const createSegment = (fromX: number, fromY: number, toX: number, toY: number) => {
+      const dx = toX - fromX;
+      const dy = toY - fromY;
+      const length = Math.sqrt(dx * dx + dy * dy);
+      const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+      return { left: fromX, top: fromY, width: length, angle };
+    };
+
+    if (drawingTool === 'connector') {
+      const path = routeConnectorPreviewPath(
+        { col: startCol, row: startRow },
+        { col: cursor.col, row: cursor.row }
+      );
+      const points = path.map(p => toScreen(p.col, p.row));
+      const segments = points.slice(0, -1).map((point, index) =>
+        createSegment(point.x, point.y, points[index + 1].x, points[index + 1].y)
+      ).filter(segment => segment.width > 0);
+      const startPoint = points[0];
+      const endPoint = points[points.length - 1];
+      return {
+        segments,
+        isArrow: false,
+        startX: startPoint.x,
+        startY: startPoint.y,
+        endX: endPoint.x,
+        endY: endPoint.y,
+      };
+    }
+
+    const { x: startX, y: startY } = toScreen(startCol, startRow);
+    const { x: endX, y: endY } = toScreen(cursor.col, cursor.row);
+    const main = createSegment(startX, startY, endX, endY);
 
     return {
-      left: startX,
-      top: startY,
-      width: length,
-      angle,
+      segments: [main],
       isArrow: drawingTool === 'arrow',
+      startX,
+      startY,
+      endX,
+      endY,
     };
-  }, [isDrawing, drawingTool, dragState, cursor, charWidth, lineHeight, zoom, panX, panY]);
+  }, [isDrawing, drawingTool, dragState, cursor, charWidth, lineHeight, zoom, panX, panY, routeConnectorPreviewPath]);
 
   // Handle resize handle mouse down
   const handleResizeHandleDown = useCallback((e: React.MouseEvent, obj: CanvasObject, handle: ResizeHandle) => {
@@ -317,6 +491,7 @@ const Canvas: React.FC<CanvasProps> = ({
     <div
       className="relative flex-1 overflow-hidden bg-bg"
       ref={containerRef}
+      onContextMenu={handleContextMenu}
     >
       {/* Hidden measurement element */}
       <span
@@ -339,7 +514,7 @@ const Canvas: React.FC<CanvasProps> = ({
           top: panY,
           width: gridWidth * zoom,
           height: gridHeight * zoom,
-          backgroundImage: 'radial-gradient(circle, var(--color-grid-dot, #131320) 1px, transparent 1px)',
+          backgroundImage: 'radial-gradient(circle, rgb(var(--color-grid-dot, 19 19 32)) 1px, transparent 1px)',
           backgroundSize: `${charWidth * zoom}px ${lineHeight * zoom}px`,
         }}
       />
@@ -353,7 +528,7 @@ const Canvas: React.FC<CanvasProps> = ({
           lineHeight: '1.5',
           left: panX,
           top: panY,
-          color: '#e0e0e8',
+          color: 'rgb(var(--color-text, 224 224 232))',
         }}
       >
         {grid.map((row, rowIdx) => (
@@ -371,6 +546,25 @@ const Canvas: React.FC<CanvasProps> = ({
           </div>
         </div>
       )}
+
+      {/* Connector anchor dots (visible while connector tool active) */}
+      {connectorAnchors.map(anchor => (
+        <div
+          key={anchor.key}
+          className="absolute pointer-events-none"
+          style={{
+            left: anchor.col * charWidth * zoom + panX + (charWidth * zoom) / 2 - HANDLE_SIZE / 2,
+            top: anchor.row * lineHeight * zoom + panY + (lineHeight * zoom) / 2 - HANDLE_SIZE / 2,
+            width: HANDLE_SIZE,
+            height: HANDLE_SIZE,
+            borderRadius: '50%',
+            background: '#facc15',
+            border: '1px solid #0a0a0f',
+            opacity: 1,
+            zIndex: 20,
+          }}
+        />
+      ))}
 
       {/* Selection overlays - different styles per object type */}
       {selectedObjects.map(obj => {
@@ -390,8 +584,8 @@ const Canvas: React.FC<CanvasProps> = ({
                 top,
                 width,
                 height,
-                border: '1px solid var(--color-selection-border, rgba(108, 138, 255, 0.5))',
-                background: 'var(--color-selection, rgba(108, 138, 255, 0.15))',
+                border: '1px solid rgb(var(--color-selection-border, 108 138 255) / 0.5)',
+                background: 'rgb(var(--color-selection, 108 138 255) / 0.15)',
               }}
             >
               {/* 8 Resize handles */}
@@ -413,8 +607,8 @@ const Canvas: React.FC<CanvasProps> = ({
                     top: handle.top,
                     width: HANDLE_SIZE,
                     height: HANDLE_SIZE,
-                    background: 'var(--color-accent, #6c8aff)',
-                    border: '1px solid var(--color-bg, #0a0a0f)',
+                    background: 'rgb(var(--color-accent, 108 138 255))',
+                    border: '1px solid rgb(var(--color-bg, 10 10 15))',
                     borderRadius: '50%',
                     cursor: getHandleCursor(handle.key),
                   }}
@@ -452,6 +646,23 @@ const Canvas: React.FC<CanvasProps> = ({
           const dy = endY - startY;
           const length = Math.sqrt(dx * dx + dy * dy);
           const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+          const connectorSegments = (obj.isConnector && obj.connectorPath && obj.connectorPath.length >= 2)
+            ? obj.connectorPath.slice(0, -1).map((point, idx) => {
+              const next = obj.connectorPath![idx + 1];
+              const x1 = point.col * charWidth * zoom + panX + charWidth * zoom / 2;
+              const y1 = point.row * lineHeight * zoom + panY + lineHeight * zoom / 2;
+              const x2 = next.col * charWidth * zoom + panX + charWidth * zoom / 2;
+              const y2 = next.row * lineHeight * zoom + panY + lineHeight * zoom / 2;
+              const segDx = x2 - x1;
+              const segDy = y2 - y1;
+              return {
+                left: x1,
+                top: y1,
+                width: Math.sqrt(segDx * segDx + segDy * segDy),
+                angle: Math.atan2(segDy, segDx) * 180 / Math.PI,
+              };
+            }).filter(seg => seg.width > 0)
+            : [];
 
           const startLeft = obj.position.col * charWidth * zoom + panX - 3.5;
           const startTop = obj.position.row * lineHeight * zoom + panY - 3.5;
@@ -468,23 +679,44 @@ const Canvas: React.FC<CanvasProps> = ({
                   top: boxTop,
                   width: boxWidth,
                   height: boxHeight,
-                  border: '1px dashed var(--color-selection-border, rgba(108, 138, 255, 0.3))',
+                  border: '1px dashed rgb(var(--color-selection-border, 108 138 255) / 0.3)',
                 }}
               />
-              {/* Visual line */}
-              <div
-                className="absolute pointer-events-none"
-                style={{
-                  left: startX,
-                  top: startY,
-                  width: length,
-                  height: 2 * zoom,
-                  background: 'var(--color-accent, #6c8aff)',
-                  transformOrigin: '0 50%',
-                  transform: `rotate(${angle}deg)`,
-                  opacity: 0.6,
-                }}
-              />
+              {/* Visual line/connector */}
+              {obj.isConnector ? (
+                <>
+                  {connectorSegments.map((segment, idx) => (
+                    <div
+                      key={idx}
+                      className="absolute pointer-events-none"
+                      style={{
+                        left: segment.left,
+                        top: segment.top,
+                        width: segment.width,
+                        height: 2 * zoom,
+                        background: 'rgb(var(--color-accent, 108 138 255))',
+                        transformOrigin: '0 50%',
+                        transform: `rotate(${segment.angle}deg)`,
+                        opacity: 0.6,
+                      }}
+                    />
+                  ))}
+                </>
+              ) : (
+                <div
+                  className="absolute pointer-events-none"
+                  style={{
+                    left: startX,
+                    top: startY,
+                    width: length,
+                    height: 2 * zoom,
+                    background: 'rgb(var(--color-accent, 108 138 255))',
+                    transformOrigin: '0 50%',
+                    transform: `rotate(${angle}deg)`,
+                    opacity: 0.6,
+                  }}
+                />
+              )}
               {/* Arrow head for arrows */}
               {obj.type === 'arrow' && (
                 <div
@@ -496,7 +728,7 @@ const Canvas: React.FC<CanvasProps> = ({
                     height: 0,
                     borderLeft: `${5 * zoom}px solid transparent`,
                     borderRight: `${5 * zoom}px solid transparent`,
-                    borderTop: `${7 * zoom}px solid var(--color-accent, #6c8aff)`,
+                    borderTop: `${7 * zoom}px solid rgb(var(--color-accent, 108 138 255))`,
                     transformOrigin: '50% 0%',
                     transform: `translate(-50%, -50%) rotate(${angle + 90}deg)`,
                     opacity: 0.6,
@@ -511,8 +743,8 @@ const Canvas: React.FC<CanvasProps> = ({
                   top: startTop,
                   width: HANDLE_SIZE,
                   height: HANDLE_SIZE,
-                  background: 'var(--color-accent, #6c8aff)',
-                  border: '1px solid var(--color-bg, #0a0a0f)',
+                  background: 'rgb(var(--color-accent, 108 138 255))',
+                  border: '1px solid rgb(var(--color-bg, 10 10 15))',
                   borderRadius: '50%',
                   cursor: 'move',
                 }}
@@ -526,8 +758,8 @@ const Canvas: React.FC<CanvasProps> = ({
                   top: endTop,
                   width: HANDLE_SIZE,
                   height: HANDLE_SIZE,
-                  background: 'var(--color-accent, #6c8aff)',
-                  border: '1px solid var(--color-bg, #0a0a0f)',
+                  background: 'rgb(var(--color-accent, 108 138 255))',
+                  border: '1px solid rgb(var(--color-bg, 10 10 15))',
                   borderRadius: '50%',
                   cursor: 'move',
                 }}
@@ -548,7 +780,7 @@ const Canvas: React.FC<CanvasProps> = ({
                 top,
                 width,
                 height,
-                background: 'var(--color-selection, rgba(108, 138, 255, 0.25))',
+                background: 'rgb(var(--color-selection, 108 138 255) / 0.25)',
                 borderRadius: '2px',
               }}
             />
@@ -567,42 +799,45 @@ const Canvas: React.FC<CanvasProps> = ({
             top: boxPreviewStyle.top,
             width: boxPreviewStyle.width,
             height: boxPreviewStyle.height,
-            borderColor: 'var(--color-selection-border, rgba(108, 138, 255, 0.5))',
-            background: 'var(--color-selection, rgba(108, 138, 255, 0.15))',
+            borderColor: 'rgb(var(--color-selection-border, 108 138 255) / 0.5)',
+            background: 'rgb(var(--color-selection, 108 138 255) / 0.15)',
           }}
         />
       )}
 
-      {/* Line/Arrow drawing preview */}
+      {/* Line/Arrow/Connector drawing preview */}
       {linePreview && (
         <div className="absolute pointer-events-none">
-          {/* Line */}
-          <div
-            style={{
-              position: 'absolute',
-              left: linePreview.left,
-              top: linePreview.top,
-              width: linePreview.width,
-              height: 2 * zoom,
-              background: 'var(--color-accent, #6c8aff)',
-              transformOrigin: '0 50%',
-              transform: `rotate(${linePreview.angle}deg)`,
-            }}
-          />
+          {/* Connector/Line segments */}
+          {linePreview.segments.map((segment, index) => (
+            <div
+              key={index}
+              style={{
+                position: 'absolute',
+                left: segment.left,
+                top: segment.top,
+                width: segment.width,
+                height: 2 * zoom,
+                background: 'rgb(var(--color-accent, 108 138 255))',
+                transformOrigin: '0 50%',
+                transform: `rotate(${segment.angle}deg)`,
+              }}
+            />
+          ))}
           {/* Arrow head */}
-          {linePreview.isArrow && (
+          {linePreview.isArrow && linePreview.segments.length > 0 && (
             <div
               style={{
                 position: 'absolute',
-                left: linePreview.left + Math.cos(linePreview.angle * Math.PI / 180) * linePreview.width,
-                top: linePreview.top + Math.sin(linePreview.angle * Math.PI / 180) * linePreview.width,
+                left: linePreview.endX,
+                top: linePreview.endY,
                 width: 0,
                 height: 0,
                 borderLeft: `${6 * zoom}px solid transparent`,
                 borderRight: `${6 * zoom}px solid transparent`,
-                borderTop: `${8 * zoom}px solid var(--color-accent, #6c8aff)`,
+                borderTop: `${8 * zoom}px solid rgb(var(--color-accent, 108 138 255))`,
                 transformOrigin: '50% 0%',
-                transform: `translate(-50%, -50%) rotate(${linePreview.angle + 90}deg)`,
+                transform: `translate(-50%, -50%) rotate(${linePreview.segments[linePreview.segments.length - 1].angle + 90}deg)`,
               }}
             />
           )}
@@ -610,12 +845,12 @@ const Canvas: React.FC<CanvasProps> = ({
           <div
             style={{
               position: 'absolute',
-              left: linePreview.left - 3.5,
-              top: linePreview.top - 3.5,
+              left: linePreview.startX - 3.5,
+              top: linePreview.startY - 3.5,
               width: 7,
               height: 7,
-              background: 'var(--color-accent, #6c8aff)',
-              border: '1px solid var(--color-bg, #0a0a0f)',
+              background: 'rgb(var(--color-accent, 108 138 255))',
+              border: '1px solid rgb(var(--color-bg, 10 10 15))',
               borderRadius: '50%',
             }}
           />
@@ -623,12 +858,12 @@ const Canvas: React.FC<CanvasProps> = ({
           <div
             style={{
               position: 'absolute',
-              left: linePreview.left + Math.cos(linePreview.angle * Math.PI / 180) * linePreview.width - 3.5,
-              top: linePreview.top + Math.sin(linePreview.angle * Math.PI / 180) * linePreview.width - 3.5,
+              left: linePreview.endX - 3.5,
+              top: linePreview.endY - 3.5,
               width: 7,
               height: 7,
-              background: 'var(--color-accent, #6c8aff)',
-              border: '1px solid var(--color-bg, #0a0a0f)',
+              background: 'rgb(var(--color-accent, 108 138 255))',
+              border: '1px solid rgb(var(--color-bg, 10 10 15))',
               borderRadius: '50%',
             }}
           />

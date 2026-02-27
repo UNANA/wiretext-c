@@ -4,7 +4,9 @@ import { COMPONENT_DEFS } from '../types';
 
 interface SettingsModalProps {
     visibleComponents: Record<ComponentType, boolean>;
+    theme: 'dark' | 'light';
     onToggleComponent: (type: ComponentType) => void;
+    onThemeChange: (theme: 'dark' | 'light') => void;
     onShowAll: () => void;
     onHideAll: () => void;
     onResetDefaults: () => void;
@@ -19,7 +21,9 @@ const CATEGORIES = [
 
 const SettingsModal: React.FC<SettingsModalProps> = ({
     visibleComponents,
+    theme,
     onToggleComponent,
+    onThemeChange,
     onShowAll,
     onHideAll,
     onResetDefaults,
@@ -52,6 +56,32 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 {/* Content */}
                 <div className="px-5 py-4 max-h-[60vh] overflow-y-auto">
+                    <div className="text-2xs text-text-dim uppercase tracking-wider mb-3">
+                        Appearance
+                    </div>
+                    <div className="mb-5 rounded border border-border bg-bg p-1">
+                        <div className="grid grid-cols-2 gap-1">
+                            <button
+                                onClick={() => onThemeChange('dark')}
+                                className={`rounded px-2.5 py-2 text-xs transition-colors ${theme === 'dark'
+                                    ? 'bg-accent text-bg'
+                                    : 'bg-transparent text-text-dim hover:bg-surface-hover hover:text-text'
+                                    }`}
+                            >
+                                Dark
+                            </button>
+                            <button
+                                onClick={() => onThemeChange('light')}
+                                className={`rounded px-2.5 py-2 text-xs transition-colors ${theme === 'light'
+                                    ? 'bg-accent text-bg'
+                                    : 'bg-transparent text-text-dim hover:bg-surface-hover hover:text-text'
+                                    }`}
+                            >
+                                Light
+                            </button>
+                        </div>
+                    </div>
+
                     <div className="text-2xs text-text-dim uppercase tracking-wider mb-3">
                         Component Visibility
                     </div>

@@ -5,7 +5,8 @@ export type Tool =
   | 'box'
   | 'text'
   | 'line'
-  | 'arrow';
+  | 'arrow'
+  | 'connector';
 
 export type ComponentType =
   | 'button'
@@ -58,6 +59,9 @@ export interface CanvasObject {
   width: number;
   height: number;
   zIndex: number;
+  layerId?: string;
+  layerName?: string;
+  layerOrder?: number;
 
   // For box/component
   borderStyle?: BoxStyle;
@@ -70,6 +74,16 @@ export interface CanvasObject {
   // For line/arrow
   endPosition?: Position;
   rotation?: number; // Rotation in degrees (0-360) for lines/arrows
+  isConnector?: boolean;
+  connectorPath?: Position[];
+  startBinding?: {
+    objectId: string;
+    handle: ResizeHandle;
+  };
+  endBinding?: {
+    objectId: string;
+    handle: ResizeHandle;
+  };
 
   // For component
   componentType?: ComponentType;
@@ -95,6 +109,13 @@ export interface CanvasObject {
 
   // For annotation
   annotation?: string;
+}
+
+export interface CanvasLayer {
+  id: string;
+  name: string;
+  order: number;
+  objectCount: number;
 }
 
 export interface GridSize {
