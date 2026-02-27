@@ -10,6 +10,7 @@ interface ToolbarProps {
   visibleComponents?: Record<ComponentType, boolean>;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  onShowAbout?: () => void;
 }
 
 const DRAW_TOOLS: { id: Tool; label: string; shortcut?: string; icon: string }[] = [
@@ -30,6 +31,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
   visibleComponents,
   collapsed = false,
   onToggleCollapse,
+  onShowAbout,
 }) => {
   const isToolActive = (id: Tool) => tool === id;
   const isComponentActive = (type: ComponentType) => pendingComponent === type;
@@ -131,7 +133,14 @@ const Toolbar: React.FC<ToolbarProps> = ({
     <div className="flex w-44 flex-col border-r border-border bg-surface select-none">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="text-2xs text-text-dim uppercase tracking-wider">WireText</span>
+        <button
+          type="button"
+          onClick={onShowAbout}
+          className="text-2xs text-text-dim uppercase tracking-wider transition-colors hover:text-text"
+          title="About WireText and shortcuts"
+        >
+          WireText
+        </button>
         <button
           className="text-text-dim text-xs hover:text-text transition-colors"
           onClick={onToggleCollapse}

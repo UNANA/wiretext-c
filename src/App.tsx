@@ -10,6 +10,7 @@ import StatusBar from './components/StatusBar';
 import ActionButtons from './components/ActionButtons';
 import ExportModal from './components/ExportModal';
 import SettingsModal from './components/SettingsModal';
+import AboutModal from './components/AboutModal';
 import type { KeyboardShortcut, ComponentType } from './types';
 import { useState } from 'react';
 import './App.css';
@@ -54,6 +55,7 @@ function App() {
 
   const [showExportModal, setShowExportModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showAboutModal, setShowAboutModal] = useState(false);
   const [shareToast, setShareToast] = useState(false);
 
   const {
@@ -133,6 +135,7 @@ function App() {
           visibleComponents={visibleComponents}
           collapsed={sidebarCollapsed}
           onToggleCollapse={toggleSidebar}
+          onShowAbout={() => setShowAboutModal(true)}
         />
 
         {/* Center - Canvas */}
@@ -213,6 +216,10 @@ function App() {
           onResetDefaults={resetDefaults}
           onClose={() => setShowSettingsModal(false)}
         />
+      )}
+
+      {showAboutModal && (
+        <AboutModal onClose={() => setShowAboutModal(false)} />
       )}
     </div>
   );
