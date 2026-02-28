@@ -51,6 +51,20 @@ export const s = {
   upLeft: "↖"
 };
 
+function getHeadChar(style: CanvasObject['connectorFromHead'], dCol: number, dRow: number): string {
+  if (style === 'dot') return '●';
+  if (style === 'arrow') {
+    if (dCol > 0) return s.right;
+    if (dCol < 0) return s.left;
+    if (dRow > 0) return s.down;
+    if (dRow < 0) return s.up;
+    return '•';
+  }
+  if (dCol !== 0) return a.horizontal;
+  if (dRow !== 0) return a.vertical;
+  return '•';
+}
+
 // Generate unique ID
 export function generateId(): string {
   return Math.random().toString(36).substring(2, 9);
@@ -573,6 +587,15 @@ export function renderObjectsToGrid(objects: CanvasObject[], gridSize: GridSize)
             else if ((fromRight && toUp) || (toRight && fromUp)) corner = '└';
             setChar(grid, curr.col, curr.row, corner);
           }
+
+          const fromHead = obj.connectorFromHead ?? 'line';
+          const toHead = obj.connectorToHead ?? 'line';
+          const start = obj.connectorPath[0];
+          const next = obj.connectorPath[1];
+          const prev = obj.connectorPath[obj.connectorPath.length - 2];
+          const end = obj.connectorPath[obj.connectorPath.length - 1];
+          setChar(grid, start.col, start.row, getHeadChar(fromHead, next.col - start.col, next.row - start.row));
+          setChar(grid, end.col, end.row, getHeadChar(toHead, end.col - prev.col, end.row - prev.row));
         } else if (row === endRow) {
           // Horizontal line
           const start = Math.min(col, endCol);

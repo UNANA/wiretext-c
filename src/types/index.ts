@@ -47,6 +47,8 @@ export type ObjectType =
   | 'arrow'
   | 'component';
 
+export type ConnectorHeadStyle = 'arrow' | 'line' | 'dot';
+
 export interface Position {
   col: number;
   row: number;
@@ -76,6 +78,8 @@ export interface CanvasObject {
   rotation?: number; // Rotation in degrees (0-360) for lines/arrows
   isConnector?: boolean;
   connectorPath?: Position[];
+  connectorFromHead?: ConnectorHeadStyle;
+  connectorToHead?: ConnectorHeadStyle;
   startBinding?: {
     objectId: string;
     handle: ResizeHandle;

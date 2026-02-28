@@ -131,8 +131,11 @@ const Canvas: React.FC<CanvasProps> = ({
     const y = (screenY - rect.top - panY) / zoom;
     const col = Math.floor(x / charWidth);
     const row = Math.floor(y / lineHeight);
-    return { col: Math.max(0, col), row: Math.max(0, row) };
-  }, [panX, panY, zoom, charWidth, lineHeight]);
+    return {
+      col: Math.min(gridSize.cols - 1, Math.max(0, col)),
+      row: Math.min(gridSize.rows - 1, Math.max(0, row)),
+    };
+  }, [panX, panY, zoom, charWidth, lineHeight, gridSize.cols, gridSize.rows]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button === 1 || (e.button === 0 && e.shiftKey)) {

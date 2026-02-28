@@ -1,5 +1,5 @@
 import React from 'react';
-import type { Tool, Position, BoxStyle, CanvasObject } from '../types';
+import type { Tool, Position, BoxStyle, CanvasObject, ConnectorHeadStyle } from '../types';
 
 interface PropertiesPanelProps {
   tool: Tool;
@@ -20,6 +20,12 @@ const FILL_OPTIONS = [
   { value: 'solid', label: 'Solid' },
   { value: 'transparent', label: 'Clear' },
 ] as const;
+
+const CONNECTOR_HEAD_OPTIONS: { value: ConnectorHeadStyle; label: string }[] = [
+  { value: 'arrow', label: 'Arrow' },
+  { value: 'line', label: 'Line' },
+  { value: 'dot', label: 'Dot' },
+];
 
 const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   tool,
@@ -98,6 +104,7 @@ const SingleObjectProperties: React.FC<SingleObjectPropertiesProps> = ({
   const isText = obj.type === 'text';
   const isLine = obj.type === 'line';
   const isArrow = obj.type === 'arrow';
+  const isConnector = isLine && obj.isConnector;
   const canRotate = (isLine && !obj.isConnector) || isArrow;
   const isCheckbox = obj.componentType === 'checkbox';
   const isRadio = obj.componentType === 'radio';
@@ -137,10 +144,11 @@ const SingleObjectProperties: React.FC<SingleObjectPropertiesProps> = ({
           <input
             type="number"
             value={obj.position.col}
+            disabled={isConnector}
             onChange={(e) => onUpdateObject(obj.id, {
               position: { ...obj.position, col: parseInt(e.target.value) || 0 }
             })}
-            className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
+            className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:select-none"
           />
         </div>
         <div>
@@ -148,10 +156,11 @@ const SingleObjectProperties: React.FC<SingleObjectPropertiesProps> = ({
           <input
             type="number"
             value={obj.position.row}
+            disabled={isConnector}
             onChange={(e) => onUpdateObject(obj.id, {
               position: { ...obj.position, row: parseInt(e.target.value) || 0 }
             })}
-            className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
+            className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:select-none"
           />
         </div>
       </div>
@@ -164,8 +173,9 @@ const SingleObjectProperties: React.FC<SingleObjectPropertiesProps> = ({
             type="number"
             min={isText ? 1 : 3}
             value={obj.width}
+            disabled={isConnector}
             onChange={(e) => onUpdateObject(obj.id, { width: Math.max(isText ? 1 : 3, parseInt(e.target.value) || (isText ? 1 : 3)) })}
-            className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
+            className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:select-none"
           />
         </div>
         <div>
@@ -174,8 +184,9 @@ const SingleObjectProperties: React.FC<SingleObjectPropertiesProps> = ({
             type="number"
             min={isText ? 1 : 3}
             value={obj.height}
+            disabled={isConnector}
             onChange={(e) => onUpdateObject(obj.id, { height: Math.max(isText ? 1 : 3, parseInt(e.target.value) || (isText ? 1 : 3)) })}
-            className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
+            className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:select-none"
           />
         </div>
       </div>
@@ -210,6 +221,40 @@ const SingleObjectProperties: React.FC<SingleObjectPropertiesProps> = ({
               className="w-14 bg-bg border border-border rounded px-2 py-1 text-xs text-text text-right focus:border-accent outline-none"
             />
             <span className="text-xs text-text-dim">°</span>
+          </div>
+        </div>
+      )}
+
+      {/* Connector heads */}
+      {isConnector && (
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-2xs text-text-dim mb-1">From head</label>
+            <select
+              value={obj.connectorFromHead ?? 'line'}
+              onChange={(e) => onUpdateObject(obj.id, { connectorFromHead: e.target.value as ConnectorHeadStyle })}
+              className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
+            >
+              {CONNECTOR_HEAD_OPTIONS.map(option => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-2xs text-text-dim mb-1">To head</label>
+            <select
+              value={obj.connectorToHead ?? 'line'}
+              onChange={(e) => onUpdateObject(obj.id, { connectorToHead: e.target.value as ConnectorHeadStyle })}
+              className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
+            >
+              {CONNECTOR_HEAD_OPTIONS.map(option => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       )}

@@ -104,7 +104,6 @@ export interface UseCanvasReturn {
 const INITIAL_COLS = 120;
 const INITIAL_ROWS = 60;
 const EXPAND_MARGIN = 20;
-const MAX_SIZE = 2000;
 const MAX_HISTORY = 100;
 const DEFAULT_LAYER_ID = 'layer-1';
 const DEFAULT_LAYER_NAME = 'Layer 1';
@@ -208,6 +207,39 @@ export function useCanvas(): UseCanvasReturn {
   // Clipboard
   const [clipboard, setClipboard] = useState<CanvasObject[]>([]);
 
+  const clamp = useCallback((value: number, min: number, max: number) => {
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
+  }, []);
+
+  const clampDeltaForObjects = useCallback((movingObjects: CanvasObject[], dCol: number, dRow: number) => {
+    if (movingObjects.length === 0) return { dCol: 0, dRow: 0 };
+
+    let minCol = Number.POSITIVE_INFINITY;
+    let minRow = Number.POSITIVE_INFINITY;
+    let maxCol = Number.NEGATIVE_INFINITY;
+    let maxRow = Number.NEGATIVE_INFINITY;
+
+    for (const obj of movingObjects) {
+      const bbox = getBoundingBox(obj);
+      minCol = Math.min(minCol, bbox.col);
+      minRow = Math.min(minRow, bbox.row);
+      maxCol = Math.max(maxCol, bbox.col + bbox.width - 1);
+      maxRow = Math.max(maxRow, bbox.row + bbox.height - 1);
+    }
+
+    const minDeltaCol = -minCol;
+    const minDeltaRow = -minRow;
+    const maxDeltaCol = (gridSize.cols - 1) - maxCol;
+    const maxDeltaRow = (gridSize.rows - 1) - maxRow;
+
+    return {
+      dCol: clamp(dCol, minDeltaCol, maxDeltaCol),
+      dRow: clamp(dRow, minDeltaRow, maxDeltaRow),
+    };
+  }, [clamp, gridSize.cols, gridSize.rows]);
+
   // Push current state to history before mutation
   const pushHistory = useCallback(() => {
     setObjects(current => {
@@ -217,24 +249,9 @@ export function useCanvas(): UseCanvasReturn {
     });
   }, []);
 
-  // Ensure space for new objects - expand grid if needed
-  const ensureSpace = useCallback((col: number, row: number) => {
-    setGridSize(current => {
-      let newCols = current.cols;
-      let newRows = current.rows;
-
-      if (col + EXPAND_MARGIN > current.cols) {
-        newCols = Math.min(col + EXPAND_MARGIN * 2, MAX_SIZE);
-      }
-      if (row + EXPAND_MARGIN > current.rows) {
-        newRows = Math.min(row + EXPAND_MARGIN * 2, MAX_SIZE);
-      }
-
-      if (newCols !== current.cols || newRows !== current.rows) {
-        return { cols: newCols, rows: newRows };
-      }
-      return current;
-    });
+  // Keep a fixed preset canvas size (no infinite auto-expansion).
+  const ensureSpace = useCallback((_col: number, _row: number) => {
+    // Intentionally no-op.
   }, []);
 
   // Render grid from objects
@@ -583,10 +600,12 @@ export function useCanvas(): UseCanvasReturn {
       const obj = prev.find(o => o.id === id);
       if (!obj) return prev;
 
+      let nextUpdates = updates;
+
       // Auto-calculate width/height for text objects based on content
       if (obj.type === 'text' && updates.content !== undefined) {
         const lines = updates.content.split('\n');
-        updates = {
+        nextUpdates = {
           ...updates,
           width: Math.max(...lines.map(l => l.length), 1),
           height: lines.length || 1
@@ -594,18 +613,28 @@ export function useCanvas(): UseCanvasReturn {
       }
 
       // Check if we need to expand grid for new position/size
-      if (updates.position || updates.width || updates.height) {
-        const newCol = updates.position?.col ?? obj.position.col;
-        const newRow = updates.position?.row ?? obj.position.row;
-        const newWidth = updates.width ?? obj.width;
-        const newHeight = updates.height ?? obj.height;
+      if (nextUpdates.position || nextUpdates.width || nextUpdates.height) {
+        const newWidth = nextUpdates.width ?? obj.width;
+        const newHeight = nextUpdates.height ?? obj.height;
+        const requestedCol = nextUpdates.position?.col ?? obj.position.col;
+        const requestedRow = nextUpdates.position?.row ?? obj.position.row;
+        const maxCol = Math.max(0, gridSize.cols - newWidth);
+        const maxRow = Math.max(0, gridSize.rows - newHeight);
+        const newCol = clamp(requestedCol, 0, maxCol);
+        const newRow = clamp(requestedRow, 0, maxRow);
+
+        nextUpdates = {
+          ...nextUpdates,
+          position: { col: newCol, row: newRow },
+        };
+
         ensureSpace(newCol + newWidth, newRow + newHeight);
       }
 
-      const updated = prev.map(o => o.id === id ? { ...o, ...updates } : o);
+      const updated = prev.map(o => o.id === id ? { ...o, ...nextUpdates } : o);
       return normalizeStackOrder(syncConnectorLines(updated));
     });
-  }, [ensureSpace, syncConnectorLines]);
+  }, [clamp, ensureSpace, gridSize.cols, gridSize.rows, syncConnectorLines]);
 
   const deleteObject = useCallback((id: string) => {
     pushHistory();
@@ -627,8 +656,11 @@ export function useCanvas(): UseCanvasReturn {
   const moveObject = useCallback((id: string, dCol: number, dRow: number) => {
     setObjects(prev => normalizeStackOrder(syncConnectorLines(prev.map(obj => {
       if (obj.id !== id) return obj;
-      const newCol = Math.max(0, obj.position.col + dCol);
-      const newRow = Math.max(0, obj.position.row + dRow);
+      const target = prev.find(candidate => candidate.id === id);
+      if (!target) return obj;
+      const bounded = clampDeltaForObjects([target], dCol, dRow);
+      const newCol = obj.position.col + bounded.dCol;
+      const newRow = obj.position.row + bounded.dRow;
 
       ensureSpace(newCol + obj.width, newRow + obj.height);
 
@@ -637,21 +669,24 @@ export function useCanvas(): UseCanvasReturn {
           ...obj,
           position: { col: newCol, row: newRow },
           endPosition: {
-            col: obj.endPosition.col + dCol,
-            row: obj.endPosition.row + dRow
+            col: obj.endPosition.col + bounded.dCol,
+            row: obj.endPosition.row + bounded.dRow
           }
         };
       }
       return { ...obj, position: { col: newCol, row: newRow } };
     }))));
-  }, [ensureSpace, syncConnectorLines]);
+  }, [clampDeltaForObjects, ensureSpace, syncConnectorLines]);
 
   const moveSelection = useCallback((dCol: number, dRow: number) => {
     if (selectedIds.size === 0) return;
-    setObjects(prev => normalizeStackOrder(syncConnectorLines(prev.map(obj => {
+    setObjects(prev => {
+      const moving = prev.filter(obj => selectedIds.has(obj.id));
+      const bounded = clampDeltaForObjects(moving, dCol, dRow);
+      return normalizeStackOrder(syncConnectorLines(prev.map(obj => {
       if (!selectedIds.has(obj.id)) return obj;
-      const newCol = Math.max(0, obj.position.col + dCol);
-      const newRow = Math.max(0, obj.position.row + dRow);
+      const newCol = obj.position.col + bounded.dCol;
+      const newRow = obj.position.row + bounded.dRow;
 
       ensureSpace(newCol + obj.width, newRow + obj.height);
 
@@ -660,14 +695,15 @@ export function useCanvas(): UseCanvasReturn {
           ...obj,
           position: { col: newCol, row: newRow },
           endPosition: {
-            col: obj.endPosition.col + dCol,
-            row: obj.endPosition.row + dRow
+            col: obj.endPosition.col + bounded.dCol,
+            row: obj.endPosition.row + bounded.dRow
           }
         };
       }
       return { ...obj, position: { col: newCol, row: newRow } };
-    }))));
-  }, [selectedIds, ensureSpace, syncConnectorLines]);
+      })));
+    });
+  }, [selectedIds, clampDeltaForObjects, ensureSpace, syncConnectorLines]);
 
   const resizeObject = useCallback((id: string, width: number, height: number) => {
     setObjects(prev => normalizeStackOrder(syncConnectorLines(prev.map(obj => {
@@ -1006,9 +1042,8 @@ export function useCanvas(): UseCanvasReturn {
     setSelectedIds(new Set());
     setPast([]);
     setFuture([]);
-    // Auto-expand grid to fit loaded objects
-    const fitted = calculateGridSize(objs, { cols: INITIAL_COLS, rows: INITIAL_ROWS });
-    setGridSize(fitted);
+    // Preserve fixed preset canvas size when loading.
+    setGridSize({ cols: INITIAL_COLS, rows: INITIAL_ROWS });
   }, [syncConnectorLines]);
 
   const handleCellMouseDown = useCallback((col: number, row: number, resizeHandle?: ResizeHandle | null) => {
@@ -1121,11 +1156,13 @@ export function useCanvas(): UseCanvasReturn {
         const anchorBox = getBoundingBox(anchor);
         const dCol = newCol - anchorBox.col;
         const dRow = newRow - anchorBox.row;
+        const movingObjects = prev.filter(obj => movingIds.has(obj.id));
+        const bounded = clampDeltaForObjects(movingObjects, dCol, dRow);
 
         const moved = prev.map(obj => {
           if (!movingIds.has(obj.id)) return obj;
-          const nextCol = Math.max(0, obj.position.col + dCol);
-          const nextRow = Math.max(0, obj.position.row + dRow);
+          const nextCol = obj.position.col + bounded.dCol;
+          const nextRow = obj.position.row + bounded.dRow;
           ensureSpace(nextCol + obj.width, nextRow + obj.height);
 
           if (obj.endPosition) {
@@ -1133,8 +1170,8 @@ export function useCanvas(): UseCanvasReturn {
               ...obj,
               position: { col: nextCol, row: nextRow },
               endPosition: {
-                col: obj.endPosition.col + dCol,
-                row: obj.endPosition.row + dRow,
+                col: obj.endPosition.col + bounded.dCol,
+                row: obj.endPosition.row + bounded.dRow,
               },
             };
           }
@@ -1286,7 +1323,7 @@ export function useCanvas(): UseCanvasReturn {
         return { ...obj, position: { col: newCol, row: newRow }, width: newWidth, height: newHeight };
       }))));
     }
-  }, [dragState, ensureSpace, marquee, getConnectorAnchor, getConnectorAnchorForEdit, syncConnectorLines]);
+  }, [clampDeltaForObjects, dragState, ensureSpace, marquee, getConnectorAnchor, getConnectorAnchorForEdit, syncConnectorLines]);
 
   const handleCellMouseUp = useCallback(() => {
     // Finalize marquee selection
@@ -1363,6 +1400,8 @@ export function useCanvas(): UseCanvasReturn {
           pushHistory();
           const newObj = createDefaultObject('line', startCol, startRow, { zIndex: objects.length });
           newObj.isConnector = true;
+          newObj.connectorFromHead = 'line';
+          newObj.connectorToHead = 'line';
           newObj.startBinding = { objectId: connectorStartAnchor.objectId, handle: connectorStartAnchor.handle };
           newObj.endBinding = { objectId: endAnchor.objectId, handle: endAnchor.handle };
           newObj.endPosition = { col: endAnchor.position.col, row: endAnchor.position.row };

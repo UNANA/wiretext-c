@@ -91,7 +91,7 @@ const AboutModal: React.FC<AboutModalProps> = ({ onClose }) => {
         </div>
 
         <div className="flex items-center justify-between border-t border-border px-3 py-2 text-2xs text-text-dim">
-          <span>v1.0.0</span>
+          <span>v1.0.1</span>
           <span aria-hidden>└────────┘</span>
         </div>
       </div>

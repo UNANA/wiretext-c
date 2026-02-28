@@ -22,9 +22,10 @@ const ExportModal: React.FC<ExportModalProps> = ({ objects, gridSize, onClose })
   const [format, setFormat] = useState<ExportFormat>('text');
   const [copied, setCopied] = useState(false);
 
+  const fittedSize = useMemo(() => calculateGridSize(objects, gridSize), [objects, gridSize]);
+
   // Compute tight-fit content based on format
   const content = useMemo(() => {
-    const fittedSize = calculateGridSize(objects, gridSize);
     const fittedGrid = renderObjectsToGrid(objects, fittedSize);
     const raw = gridToString(fittedGrid).replace(/\n+$/, '');
 
@@ -36,7 +37,7 @@ const ExportModal: React.FC<ExportModalProps> = ({ objects, gridSize, onClose })
           .replace(/&/g, '&amp;')
           .replace(/</g, '&lt;')
           .replace(/>/g, '&gt;');
-        return `<pre style="font-family: 'JetBrains Mono', monospace; font-size: 14px; line-height: 1.5;">${escaped}</pre>`;
+        return `<pre style="font-family: 'JetBrains Mono', monospace; font-size: 14px; line-height: 1.5;">\n${escaped}\n</pre>`;
       }
       case 'github':
         return [
@@ -53,7 +54,14 @@ const ExportModal: React.FC<ExportModalProps> = ({ objects, gridSize, onClose })
       default:
         return raw;
     }
-  }, [objects, gridSize, format]);
+  }, [objects, fittedSize, format]);
+
+  const previewMetrics = useMemo(() => {
+    const lines = content.split('\n');
+    const lineCount = Math.max(lines.length, 20);
+    const maxLineLength = Math.max(...lines.map((line) => line.length), 80);
+    return { lineCount, maxLineLength };
+  }, [content]);
 
   const handleCopy = useCallback(async () => {
     try {
@@ -142,8 +150,11 @@ const ExportModal: React.FC<ExportModalProps> = ({ objects, gridSize, onClose })
           <textarea
             value={content}
             readOnly
-            className="w-full min-h-[300px] bg-bg border border-border text-text p-3 font-mono text-xs resize-y outline-none focus:border-accent"
-            rows={20}
+            wrap="off"
+            spellCheck={false}
+            className="min-h-[300px] min-w-full bg-bg border border-border text-text p-3 font-mono text-xs resize-none outline-none focus:border-accent"
+            rows={previewMetrics.lineCount}
+            cols={previewMetrics.maxLineLength}
           />
         </div>
 

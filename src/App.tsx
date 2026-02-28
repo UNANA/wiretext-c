@@ -201,6 +201,7 @@ function App() {
       { id: 'copy', label: 'Copy', shortcut: '⌘C', onClick: copySelection },
       { id: 'cut', label: 'Cut', shortcut: '⌘X', onClick: cutSelection },
       { id: 'paste', label: 'Paste', shortcut: '⌘V', onClick: pasteClipboard },
+      { id: 'delete', label: 'Delete', shortcut: '⌫', onClick: deleteSelection },
       { id: 'duplicate', label: 'Duplicate', shortcut: '⌘D', onClick: duplicateSelection },
       { id: 'to-front', label: 'Bring to front', shortcut: '⌘]', onClick: () => arrangeSelectionLayer('toFront') },
       { id: 'forward', label: 'Bring forward', shortcut: ']', onClick: () => arrangeSelectionLayer('forward') },
@@ -215,6 +216,7 @@ function App() {
     copySelection,
     cutSelection,
     pasteClipboard,
+    deleteSelection,
     duplicateSelection,
     arrangeSelectionLayer,
   ]);
@@ -238,16 +240,18 @@ function App() {
       {/* Main content area */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left sidebar - Tools */}
-        <Toolbar
-          tool={tool}
-          setTool={setTool}
-          pendingComponent={pendingComponent}
-          setPendingComponent={handleSetPendingComponent}
-          visibleComponents={visibleComponents}
-          collapsed={sidebarCollapsed}
-          onToggleCollapse={toggleSidebar}
-          onShowAbout={() => setShowAboutModal(true)}
-        />
+        <div className="flex h-full select-none">
+          <Toolbar
+            tool={tool}
+            setTool={setTool}
+            pendingComponent={pendingComponent}
+            setPendingComponent={handleSetPendingComponent}
+            visibleComponents={visibleComponents}
+            collapsed={sidebarCollapsed}
+            onToggleCollapse={toggleSidebar}
+            onShowAbout={() => setShowAboutModal(true)}
+          />
+        </div>
 
         {/* Center - Canvas */}
         <div className="relative flex-1 flex flex-col">
@@ -290,7 +294,7 @@ function App() {
           />
           {contextMenu && (
             <div
-              className="fixed z-40 min-w-[260px] rounded-md border border-border bg-surface p-1 shadow-2xl"
+              className="fixed z-40 min-w-[260px] select-none rounded-md border border-border bg-surface p-1 shadow-2xl"
               style={{ left: menuLeft, top: menuTop }}
               onMouseDown={(e) => e.stopPropagation()}
             >
@@ -312,7 +316,7 @@ function App() {
         </div>
 
         {/* Right sidebar - Inspector tabs */}
-        <div className="flex w-64 flex-col border-l border-border bg-surface">
+        <div className="flex w-64 select-none flex-col border-l border-border bg-surface">
           <div className="flex border-b border-border">
             <button
               onClick={() => setInspectorTab('layers')}
