@@ -816,6 +816,13 @@ export function renderObjectsToGrid(objects: CanvasObject[], gridSize: GridSize)
         }
         break;
       }
+
+      case 'pencil': {
+        for (const point of obj.points || []) {
+          drawChar(grid, point.col, point.row, '█');
+        }
+        break;
+      }
     }
   }
 
@@ -891,6 +898,29 @@ export function getBoundingBox(obj: CanvasObject): { col: number; row: number; w
         row: startRow,
         width: Math.max(obj.position.col, endCol) - startCol + 1,
         height: Math.max(obj.position.row, endRow) - startRow + 1
+      };
+    }
+
+    case 'pencil': {
+      const points = obj.points || [];
+      if (points.length === 0) {
+        return { col: obj.position.col, row: obj.position.row, width: 1, height: 1 };
+      }
+      let minCol = Number.POSITIVE_INFINITY;
+      let minRow = Number.POSITIVE_INFINITY;
+      let maxCol = Number.NEGATIVE_INFINITY;
+      let maxRow = Number.NEGATIVE_INFINITY;
+      for (const point of points) {
+        minCol = Math.min(minCol, point.col);
+        minRow = Math.min(minRow, point.row);
+        maxCol = Math.max(maxCol, point.col);
+        maxRow = Math.max(maxRow, point.row);
+      }
+      return {
+        col: minCol,
+        row: minRow,
+        width: maxCol - minCol + 1,
+        height: maxRow - minRow + 1,
       };
     }
 
@@ -1073,6 +1103,13 @@ export function hitTest(objects: CanvasObject[], col: number, row: number): Canv
         return obj;
       }
     }
+
+    else if (obj.type === 'pencil') {
+      const points = obj.points || [];
+      for (const point of points) {
+        if (point.col === col && point.row === row) return obj;
+      }
+    }
   }
   return null;
 }
@@ -1086,7 +1123,7 @@ export function compareObjectsByStackOrder(a: CanvasObject, b: CanvasObject): nu
 // Get resize handle
 export function getResizeHandle(obj: CanvasObject, col: number, row: number): string | null {
   // Text objects don't have resize handles
-  if (obj.type === 'text') return null;
+  if (obj.type === 'text' || obj.type === 'pencil') return null;
 
   // Line/Arrow: only start and end points are resize handles - check them first
   // so we get correct handle when corners overlap (e.g. horizontal/vertical lines)

@@ -122,6 +122,8 @@ function App() {
     { key: 'l', handler: () => setTool(TOOLS.LINE) },
     { key: 'a', handler: () => setTool(TOOLS.ARROW) },
     { key: 'c', handler: () => setTool(TOOLS.CONNECTOR) },
+    { key: 'n', handler: () => setTool(TOOLS.PENCIL) },
+    { key: 'e', handler: () => setTool(TOOLS.ERASER) },
     { key: 'Delete', handler: () => deleteSelection() },
     { key: 'Backspace', handler: () => deleteSelection() },
     { key: 'ArrowUp', handler: () => handleKeyDown('ArrowUp') },

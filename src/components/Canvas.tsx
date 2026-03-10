@@ -196,7 +196,7 @@ const Canvas: React.FC<CanvasProps> = ({
     e.preventDefault();
     const pos = screenToGrid(e.clientX, e.clientY);
     const hit = hitTest(objects, pos.col, pos.row);
-    const onSelection = !!hit && selectedIds.has(hit.id);
+    const onSelection = (!!hit && selectedIds.has(hit.id)) || selectedIds.size > 0;
     onCanvasContextMenu?.(e.clientX, e.clientY, onSelection);
   }, [screenToGrid, objects, selectedIds, onCanvasContextMenu]);
 
@@ -786,6 +786,24 @@ const Canvas: React.FC<CanvasProps> = ({
                 width,
                 height,
                 background: 'rgb(var(--color-selection, 108 138 255) / 0.25)',
+                borderRadius: '2px',
+              }}
+            />
+          );
+        }
+
+        if (obj.type === 'pencil') {
+          return (
+            <div
+              key={obj.id}
+              className="absolute pointer-events-none"
+              style={{
+                left,
+                top,
+                width,
+                height,
+                border: '1px dashed rgb(var(--color-selection-border, 108 138 255) / 0.5)',
+                background: 'rgb(var(--color-selection, 108 138 255) / 0.1)',
                 borderRadius: '2px',
               }}
             />

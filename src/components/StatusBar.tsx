@@ -26,6 +26,8 @@ const StatusBar: React.FC<StatusBarProps> = ({
     line: 'LINE',
     arrow: 'ARROW',
     connector: 'CONNECTOR',
+    pencil: 'PENCIL',
+    eraser: 'ERASER',
   };
 
   const componentName = pendingComponent

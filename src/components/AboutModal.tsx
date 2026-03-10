@@ -11,6 +11,8 @@ const SHORTCUTS = [
   { keys: 'L', action: 'Line' },
   { keys: 'A', action: 'Arrow' },
   { keys: 'C', action: 'Connector' },
+  { keys: 'N', action: 'Pencil' },
+  { keys: 'E', action: 'Eraser' },
   { keys: 'P', action: 'Toggle sidebar' },
   { keys: 'Esc', action: 'Return to Select tool' },
   { keys: '↑ ↓ ← →', action: 'Nudge selected objects' },
@@ -91,7 +93,7 @@ const AboutModal: React.FC<AboutModalProps> = ({ onClose }) => {
         </div>
 
         <div className="flex items-center justify-between border-t border-border px-3 py-2 text-2xs text-text-dim">
-          <span>v1.0.1</span>
+          <span>v1.0.3</span>
           <span aria-hidden>└────────┘</span>
         </div>
       </div>

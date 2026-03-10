@@ -7,6 +7,7 @@ import {
   hitTest,
   getResizeHandle,
   getLineLength,
+  getLinePoints,
   gridToString,
   isResizable,
   getBoundingBox,
@@ -22,6 +23,8 @@ export const TOOLS = {
   LINE: 'line' as Tool,
   ARROW: 'arrow' as Tool,
   CONNECTOR: 'connector' as Tool,
+  PENCIL: 'pencil' as Tool,
+  ERASER: 'eraser' as Tool,
 };
 
 export type ExportFormat = 'text' | 'markdown' | 'html' | 'github';
@@ -248,6 +251,28 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       dRow: clamp(dRow, minDeltaRow, maxDeltaRow),
     };
   }, [clamp, gridSize.cols, gridSize.rows]);
+
+  const getPencilBounds = useCallback((points: Position[]) => {
+    if (points.length === 0) {
+      return { col: 0, row: 0, width: 1, height: 1 };
+    }
+    let minCol = Number.POSITIVE_INFINITY;
+    let minRow = Number.POSITIVE_INFINITY;
+    let maxCol = Number.NEGATIVE_INFINITY;
+    let maxRow = Number.NEGATIVE_INFINITY;
+    for (const point of points) {
+      minCol = Math.min(minCol, point.col);
+      minRow = Math.min(minRow, point.row);
+      maxCol = Math.max(maxCol, point.col);
+      maxRow = Math.max(maxRow, point.row);
+    }
+    return {
+      col: minCol,
+      row: minRow,
+      width: maxCol - minCol + 1,
+      height: maxRow - minRow + 1,
+    };
+  }, []);
 
   const getBoundsForObjects = useCallback((list: CanvasObject[]) => {
     let minCol = Number.POSITIVE_INFINITY;
@@ -828,6 +853,16 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
           }
         };
       }
+      if (obj.type === 'pencil' && obj.points) {
+        return {
+          ...obj,
+          position: { col: newCol, row: newRow },
+          points: obj.points.map((point) => ({
+            col: point.col + bounded.dCol,
+            row: point.row + bounded.dRow,
+          })),
+        };
+      }
       return { ...obj, position: { col: newCol, row: newRow } };
     }))));
   }, [clampDeltaForObjects, ensureSpace, syncConnectorLines]);
@@ -852,6 +887,16 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
             col: obj.endPosition.col + bounded.dCol,
             row: obj.endPosition.row + bounded.dRow
           }
+        };
+      }
+      if (obj.type === 'pencil' && obj.points) {
+        return {
+          ...obj,
+          position: { col: newCol, row: newRow },
+          points: obj.points.map((point) => ({
+            col: point.col + bounded.dCol,
+            row: point.row + bounded.dRow,
+          })),
         };
       }
       return { ...obj, position: { col: newCol, row: newRow } };
@@ -913,6 +958,23 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
 
   const clearSelection = useCallback(() => {
     setSelectedIds(new Set());
+  }, []);
+
+  const eraseAt = useCallback((col: number, row: number) => {
+    let removedId: string | null = null;
+    setObjects(prev => {
+      const hit = hitTest(prev, col, row);
+      if (!hit) return prev;
+      removedId = hit.id;
+      return normalizeStackOrder(prev.filter(obj => obj.id !== hit.id));
+    });
+    if (!removedId) return;
+    setSelectedIds(prev => {
+      if (!prev.has(removedId!)) return prev;
+      const next = new Set(prev);
+      next.delete(removedId!);
+      return next;
+    });
   }, []);
 
   // --- Undo/Redo ---
@@ -1256,8 +1318,33 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       return;
     }
 
-    // Start drawing box/line/arrow/connector
-    if (tool === TOOLS.BOX || tool === TOOLS.LINE || tool === TOOLS.ARROW || tool === TOOLS.CONNECTOR) {
+    // Start drawing tools
+    if (tool === TOOLS.BOX || tool === TOOLS.LINE || tool === TOOLS.ARROW || tool === TOOLS.CONNECTOR || tool === TOOLS.PENCIL || tool === TOOLS.ERASER) {
+      if (tool === TOOLS.PENCIL) {
+        pushHistory();
+        const newObj: CanvasObject = {
+          id: generateId(),
+          type: 'pencil',
+          position: { col, row },
+          width: 1,
+          height: 1,
+          zIndex: objects.length,
+          layerId: DEFAULT_LAYER_ID,
+          layerName: DEFAULT_LAYER_NAME,
+          layerOrder: 0,
+          points: [{ col, row }],
+        };
+        setObjects(prev => normalizeStackOrder([...prev, newObj]));
+        setSelectedIds(new Set([newObj.id]));
+        setDragState({ type: 'drawing', startCol: col, startRow: row, tool, drawingObjectId: newObj.id });
+        return;
+      }
+      if (tool === TOOLS.ERASER) {
+        pushHistory();
+        eraseAt(col, row);
+        setDragState({ type: 'drawing', startCol: col, startRow: row, tool });
+        return;
+      }
       if (tool === TOOLS.CONNECTOR) {
         const anchor = getConnectorAnchor(col, row);
         if (!anchor) return;
@@ -1283,7 +1370,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       setTool(TOOLS.SELECT);
       return;
     }
-  }, [tool, objects, selectedIds, pendingComponent, selectObject, clearSelection, objects.length, ensureSpace, pushHistory, getConnectorAnchor]);
+  }, [tool, objects, selectedIds, pendingComponent, selectObject, clearSelection, objects.length, ensureSpace, pushHistory, getConnectorAnchor, eraseAt]);
 
   const handleCellMouseMove = useCallback((col: number, row: number) => {
     if (dragState.type === 'drawing' && dragState.tool === TOOLS.CONNECTOR) {
@@ -1296,6 +1383,41 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     // Update marquee
     if (marquee) {
       setMarquee(prev => prev ? { ...prev, endCol: col, endRow: row } : null);
+      return;
+    }
+
+    if (dragState.type === 'drawing' && dragState.tool === TOOLS.PENCIL && dragState.drawingObjectId) {
+      setObjects(prev => normalizeStackOrder(prev.map(obj => {
+        if (obj.id !== dragState.drawingObjectId || obj.type !== 'pencil') return obj;
+        const existing = obj.points || [];
+        const last = existing[existing.length - 1] || { col: dragState.startCol, row: dragState.startRow };
+        const added: Position[] = [];
+        for (const point of getLinePoints(last.col, last.row, col, row)) {
+          added.push(point);
+        }
+        if (added.length === 0) return obj;
+        const seen = new Set(existing.map((point) => `${point.col},${point.row}`));
+        const merged = [...existing];
+        for (const point of added) {
+          const key = `${point.col},${point.row}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(point);
+        }
+        const bounds = getPencilBounds(merged);
+        return {
+          ...obj,
+          points: merged,
+          position: { col: bounds.col, row: bounds.row },
+          width: bounds.width,
+          height: bounds.height,
+        };
+      })));
+      return;
+    }
+
+    if (dragState.type === 'drawing' && dragState.tool === TOOLS.ERASER) {
+      eraseAt(col, row);
       return;
     }
 
@@ -1354,6 +1476,16 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
                 col: obj.endPosition.col + finalDelta.dCol,
                 row: obj.endPosition.row + finalDelta.dRow,
               },
+            };
+          }
+          if (obj.type === 'pencil' && obj.points) {
+            return {
+              ...obj,
+              position: { col: nextCol, row: nextRow },
+              points: obj.points.map((point) => ({
+                col: point.col + finalDelta.dCol,
+                row: point.row + finalDelta.dRow,
+              })),
             };
           }
 
@@ -1544,7 +1676,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
         return { ...obj, position: { col: newCol, row: newRow }, width: newWidth, height: newHeight };
       }))));
     }
-  }, [clampDeltaForObjects, computeSmartGuidesForBounds, dragState, ensureSpace, getBoundsForObjects, marquee, getConnectorAnchor, getConnectorAnchorForEdit, smartGuidesEnabled, syncConnectorLines]);
+  }, [clampDeltaForObjects, computeSmartGuidesForBounds, dragState, ensureSpace, getBoundsForObjects, marquee, getConnectorAnchor, getConnectorAnchorForEdit, smartGuidesEnabled, syncConnectorLines, getPencilBounds, eraseAt]);
 
   const handleCellMouseUp = useCallback(() => {
     // Finalize marquee selection

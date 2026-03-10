@@ -28,6 +28,7 @@ function getObjectIcon(obj: CanvasObject): string {
   if (obj.type === 'component') return '▪';
   if (obj.type === 'line') return '╱';
   if (obj.type === 'arrow') return '→';
+  if (obj.type === 'pencil') return '█';
   return '□';
 }
 

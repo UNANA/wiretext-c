@@ -6,7 +6,9 @@ export type Tool =
   | 'text'
   | 'line'
   | 'arrow'
-  | 'connector';
+  | 'connector'
+  | 'pencil'
+  | 'eraser';
 
 export type ComponentType =
   | 'button'
@@ -45,7 +47,8 @@ export type ObjectType =
   | 'text'
   | 'line'
   | 'arrow'
-  | 'component';
+  | 'component'
+  | 'pencil';
 
 export type ConnectorHeadStyle = 'arrow' | 'line' | 'dot';
 
@@ -79,6 +82,7 @@ export interface CanvasObject {
 
   // For text
   content?: string;
+  points?: Position[];
 
   // For line/arrow
   endPosition?: Position;
@@ -147,7 +151,7 @@ export interface KeyboardShortcut {
 
 export type DragState =
   | { type: 'none' }
-  | { type: 'drawing'; startCol: number; startRow: number; tool: Tool }
+  | { type: 'drawing'; startCol: number; startRow: number; tool: Tool; drawingObjectId?: string }
   | { type: 'moving'; objectId: string; offsetCol: number; offsetRow: number }
   | { type: 'resizing'; objectId: string; handle: ResizeHandle };
 

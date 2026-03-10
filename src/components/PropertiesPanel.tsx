@@ -41,6 +41,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     line: 'Line',
     arrow: 'Arrow',
     connector: 'Connector',
+    pencil: 'Pencil',
+    eraser: 'Eraser',
   };
 
   return (

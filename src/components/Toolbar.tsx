@@ -13,13 +13,15 @@ interface ToolbarProps {
   onShowAbout?: () => void;
 }
 
-const DRAW_TOOLS: { id: Tool; label: string; shortcut?: string; icon: string }[] = [
-  { id: 'select', label: 'Select', shortcut: 'V', icon: '↖' },
-  { id: 'box', label: 'Box', shortcut: 'B', icon: '┌─┐' },
-  { id: 'text', label: 'Text', shortcut: 'T', icon: 'Aa' },
-  { id: 'line', label: 'Line', shortcut: 'L', icon: '───' },
-  { id: 'arrow', label: 'Arrow', shortcut: 'A', icon: '──▸' },
-  { id: 'connector', label: 'Connector', shortcut: 'C', icon: 'o─o' },
+const DRAW_TOOLS: { id: Tool; label: string; shortcut?: string; icon: string; bigIcon?: boolean }[] = [
+  { id: 'select', label: 'Select', shortcut: 'V', icon: '↖', bigIcon:true },
+  { id: 'box', label: 'Box', shortcut: 'B', icon: '┌─┐', bigIcon:false },
+  { id: 'text', label: 'Text', shortcut: 'T', icon: 'Aa', bigIcon:false },
+  { id: 'line', label: 'Line', shortcut: 'L', icon: '───', bigIcon:false },
+  { id: 'arrow', label: 'Arrow', shortcut: 'A', icon: '──▸', bigIcon:false },
+  { id: 'connector', label: 'Connector', shortcut: 'C', icon: 'o─o', bigIcon:false },
+  { id: 'pencil', label: 'Pencil', shortcut: 'N', icon: 'ᝰ', bigIcon:true },
+  { id: 'eraser', label: 'Eraser', shortcut: 'E', icon: '⌫', bigIcon:true },
 ];
 
 const CATEGORIES = ['input', 'layout', 'display'] as const;
@@ -91,7 +93,11 @@ const Toolbar: React.FC<ToolbarProps> = ({
                 onClick={() => { setTool(t.id); setPendingComponent(null); }}
                 title={`${t.label} (${t.shortcut})`}
               >
-                <span className="font-mono text-2xs">{t.icon.slice(0, 2)}</span>
+                {t.bigIcon ? (
+                  <span className="font-mono text-text text-base">{t.icon}</span>
+                ) : (
+                  <span className="font-mono text-2xs">{t.icon.slice(0, 2)}</span>
+                )}
               </button>
             ))}
           </div>
@@ -183,7 +189,11 @@ const Toolbar: React.FC<ToolbarProps> = ({
                   }`}
                 onClick={() => { setTool(t.id); setPendingComponent(null); }}
               >
-                <span className="w-10 shrink-0 font-mono text-2xs">{t.icon}</span>
+                {t.bigIcon ? (
+                  <span className="w-10 shrink-0 font-mono ml-1 text-base leading-none">{t.icon}</span>
+                ) : (
+                  <span className="w-10 shrink-0 font-mono text-2xs">{t.icon}</span>
+                )}
                 <span className="flex-1">{t.label}</span>
                 {t.shortcut && (
                   <span className="font-mono text-2xs opacity-40">{t.shortcut}</span>
