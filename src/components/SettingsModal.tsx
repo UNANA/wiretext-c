@@ -5,8 +5,10 @@ import { COMPONENT_DEFS } from '../types';
 interface SettingsModalProps {
     visibleComponents: Record<ComponentType, boolean>;
     theme: 'dark' | 'light';
+    smartGuidesEnabled: boolean;
     onToggleComponent: (type: ComponentType) => void;
     onThemeChange: (theme: 'dark' | 'light') => void;
+    onSmartGuidesChange: (enabled: boolean) => void;
     onShowAll: () => void;
     onHideAll: () => void;
     onResetDefaults: () => void;
@@ -22,8 +24,10 @@ const CATEGORIES = [
 const SettingsModal: React.FC<SettingsModalProps> = ({
     visibleComponents,
     theme,
+    smartGuidesEnabled,
     onToggleComponent,
     onThemeChange,
+    onSmartGuidesChange,
     onShowAll,
     onHideAll,
     onResetDefaults,
@@ -78,6 +82,32 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                     }`}
                             >
                                 Light
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="mb-5 rounded border border-border bg-bg px-3 py-2">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <div className="text-xs text-text">Smart Alignment Guides</div>
+                                <div className="text-2xs text-text-dim mt-0.5">
+                                    Show snap lines and enable snapping while dragging/resizing
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={smartGuidesEnabled}
+                                onClick={() => onSmartGuidesChange(!smartGuidesEnabled)}
+                                className={`h-6 w-11 rounded-full border transition-colors ${smartGuidesEnabled
+                                        ? 'border-accent bg-accent/70'
+                                        : 'border-border bg-surface-hover'
+                                    }`}
+                            >
+                                <span
+                                    className={`block h-4 w-4 rounded-full bg-white transition-transform ${smartGuidesEnabled ? 'translate-x-5' : 'translate-x-1'
+                                        }`}
+                                />
                             </button>
                         </div>
                     </div>

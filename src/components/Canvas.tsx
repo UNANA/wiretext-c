@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
-import type { Grid, Position, CanvasObject, DragState, ResizeHandle, Tool } from '../types';
+import type { Grid, Position, CanvasObject, DragState, ResizeHandle, Tool, AlignmentGuide } from '../types';
 import { compareObjectsByStackOrder, getLineLength, hitTest } from '../utils/boxDrawing';
 import type { MarqueeState } from '../hooks/useCanvas';
 
@@ -69,6 +69,7 @@ interface CanvasProps {
   setEditingObjectId?: (id: string | null) => void;
   onUpdateObject?: (id: string, updates: Partial<CanvasObject>) => void;
   marquee?: MarqueeState | null;
+  alignmentGuides?: AlignmentGuide[];
   panViewport?: (dx: number, dy: number) => void;
   onCanvasContextMenu?: (x: number, y: number, onSelection: boolean) => void;
 }
@@ -111,6 +112,7 @@ const Canvas: React.FC<CanvasProps> = ({
   setEditingObjectId,
   onUpdateObject,
   marquee,
+  alignmentGuides = [],
   panViewport,
   onCanvasContextMenu,
 }) => {
@@ -919,6 +921,42 @@ const Canvas: React.FC<CanvasProps> = ({
           />
         );
       })()}
+
+      {/* Smart alignment guides while moving/resizing */}
+      {objects.length > 1 && alignmentGuides.map((guide, idx) => {
+        if (guide.orientation === 'vertical') {
+          return (
+            <div
+              key={`guide-v-${idx}`}
+              className="absolute pointer-events-none"
+              style={{
+                left: guide.at * charWidth * zoom + panX + (charWidth * zoom) / 2,
+                top: panY,
+                width: 1,
+                height: gridHeight * zoom,
+                background: 'rgb(var(--color-accent, 108 138 255))',
+                opacity: 0.9,
+                zIndex: 25,
+              }}
+            />
+          );
+        }
+        return (
+          <div
+            key={`guide-h-${idx}`}
+            className="absolute pointer-events-none"
+            style={{
+              left: panX,
+              top: guide.at * lineHeight * zoom + panY + (lineHeight * zoom) / 2,
+              width: gridWidth * zoom,
+              height: 1,
+              background: 'rgb(var(--color-accent, 108 138 255))',
+              opacity: 0.9,
+              zIndex: 25,
+            }}
+          />
+        );
+      })}
 
       {/* Interaction overlay - disabled when editing text */}
       {!editingObjectId && (

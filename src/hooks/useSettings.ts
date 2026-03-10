@@ -11,6 +11,7 @@ interface Settings {
     visibleComponents: ComponentVisibility;
     sidebarCollapsed: boolean;
     theme: Theme;
+    smartGuidesEnabled: boolean;
 }
 
 const DEFAULT_VISIBLE: Set<ComponentType> = new Set([
@@ -41,6 +42,7 @@ function getDefaultSettings(): Settings {
         visibleComponents: getDefaultVisibility(),
         sidebarCollapsed: false,
         theme: 'dark',
+        smartGuidesEnabled: true,
     };
 }
 
@@ -57,6 +59,7 @@ function loadSettings(): Settings {
                 },
                 sidebarCollapsed: parsed.sidebarCollapsed ?? false,
                 theme: parsed.theme === 'light' ? 'light' : 'dark',
+                smartGuidesEnabled: parsed.smartGuidesEnabled ?? true,
             };
         }
     } catch {
@@ -125,15 +128,24 @@ export function useSettings() {
         }));
     }, []);
 
+    const setSmartGuidesEnabled = useCallback((enabled: boolean) => {
+        setSettings((prev) => ({
+            ...prev,
+            smartGuidesEnabled: enabled,
+        }));
+    }, []);
+
     return {
         visibleComponents: settings.visibleComponents,
         sidebarCollapsed: settings.sidebarCollapsed,
         theme: settings.theme,
+        smartGuidesEnabled: settings.smartGuidesEnabled,
         toggleComponent,
         showAll,
         hideAll,
         resetDefaults,
         toggleSidebar,
         setTheme,
+        setSmartGuidesEnabled,
     };
 }

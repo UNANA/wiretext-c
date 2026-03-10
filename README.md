@@ -1,29 +1,39 @@
-# Wiretext — Unicode Wireframe Design Tool
+# Wiretext
 
-A spatial design tool where everything renders as Unicode box-drawing characters. Create wireframes, diagrams, and mockups entirely in text. Share as plain text, Markdown, or HTML.
+Wiretext is a Unicode-first wireframing canvas for building UI mockups and diagrams using box-drawing characters.  
+Design in a visual editor, then export clean text output for docs, markdown, issues, and PRs.
 
-## Features
+## What's New
 
-- **Draw tools** — Box, text, line, arrow, and select
-- **30+ pre-built components** — Buttons, inputs, tables, modals, cards, navbars, tabs, progress bars, dropdowns, calendars, and more
-- **Full canvas** — Zoom, pan, grid snapping, marquee selection, resize handles
-- **Edit operations** — Undo/redo, copy/paste/duplicate, delete
-- **Export** — Plain text, Markdown, HTML, or GitHub-ready code blocks
-- **Share** — Compressed URL links (LZ-string) to share designs
+- **Smart Alignment Guides + snapping** while moving and resizing objects
+- **Toggle for Smart Guides** in Settings
+- **Layer grouping workflow** (`Group/Ungroup`) with better ordering controls
+- **Connector tool improvements** with object anchors and routed connector paths
+
+## Core Features
+
+- **Drawing tools**: Select, Box, Text, Line, Arrow, Connector
+- **30+ UI components**: inputs, layout blocks, display widgets, and navigation patterns
+- **Layer-aware editing**: create layers from selection, move items between layers, reorder layers
+- **Power editing**: marquee selection, resize handles, undo/redo, copy/cut/paste, duplicate
+- **Viewport controls**: zoom and pan with a fixed canvas grid
+- **Export formats**: plain text, Markdown, HTML, and GitHub-ready collapsible snippets
+- **Share links**: compressed URL payloads via `lz-string`
+- **Persistent preferences**: theme, sidebar state, visible component palette, smart guides toggle
 
 ## Tech Stack
 
-- **React 19** + **TypeScript**
-- **Vite 7**
-- **Tailwind CSS**
-- **lz-string** — URL compression for sharing
+- `React 19` + `TypeScript`
+- `Vite 7`
+- `Tailwind CSS`
+- `lz-string`
 
 ## Getting Started
 
 ### Prerequisites
 
 - Node.js 18+
-- npm, yarn, or bun
+- npm (or your preferred package manager)
 
 ### Install
 
@@ -31,7 +41,7 @@ A spatial design tool where everything renders as Unicode box-drawing characters
 npm install
 ```
 
-### Development
+### Run locally
 
 ```bash
 npm run dev
@@ -39,7 +49,7 @@ npm run dev
 
 Open [http://localhost:5173](http://localhost:5173).
 
-### Build
+### Build for production
 
 ```bash
 npm run build
@@ -51,36 +61,51 @@ npm run build
 npm run preview
 ```
 
+### Lint
+
+```bash
+npm run lint
+```
+
 ## Keyboard Shortcuts
 
 | Key | Action |
-|-----|--------|
+| --- | --- |
 | `V` | Select tool |
 | `B` | Box tool |
 | `T` | Text tool |
 | `L` | Line tool |
 | `A` | Arrow tool |
-| `P` | Toggle sidebar |
+| `C` | Connector tool |
+| `P` | Toggle toolbar collapse |
 | `Delete` / `Backspace` | Delete selection |
 | `Ctrl/Cmd + Z` | Undo |
 | `Ctrl/Cmd + Shift + Z` | Redo |
 | `Ctrl/Cmd + C` | Copy |
+| `Ctrl/Cmd + X` | Cut |
 | `Ctrl/Cmd + V` | Paste |
 | `Ctrl/Cmd + D` | Duplicate |
-| `Escape` | Cancel / Select tool |
+| `Ctrl/Cmd + A` | Select all |
+| `Ctrl/Cmd + G` | Group selection |
+| `Ctrl/Cmd + Shift + G` | Ungroup to default layer |
+| `]` | Bring selection forward |
+| `[` | Send selection backward |
+| `Cmd + ]` | Bring selection to front |
+| `Cmd + [` | Send selection to back |
+| `Escape` | Return to Select tool |
 
 ## Project Structure
 
-```
+```txt
 src/
-├── components/     # Toolbar, Canvas, PropertiesPanel, StatusBar, etc.
-├── hooks/          # useCanvas, useKeyboard, useSettings, useShareUrl
-├── utils/          # boxDrawing — Unicode rendering logic
-├── types/          # TypeScript types and component definitions
+├── components/   # Canvas, toolbar, panels, modals
+├── hooks/        # useCanvas, useSettings, useKeyboard, useShareUrl
+├── types/        # Object, tool, and component type definitions
+├── utils/        # Unicode rendering and canvas math
 ├── App.tsx
 └── main.tsx
 ```
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).

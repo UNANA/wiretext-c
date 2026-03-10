@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { flushSync } from 'react-dom';
 import {
   renderObjectsToGrid,
@@ -13,7 +13,7 @@ import {
   calculateGridSize,
   generateId,
 } from '../utils/boxDrawing';
-import type { Grid, Tool, Position, CanvasObject, ComponentType, DragState, ResizeHandle, GridSize, CanvasLayer } from '../types';
+import type { Grid, Tool, Position, CanvasObject, ComponentType, DragState, ResizeHandle, GridSize, CanvasLayer, AlignmentGuide } from '../types';
 
 export const TOOLS = {
   SELECT: 'select' as Tool,
@@ -52,6 +52,7 @@ export interface UseCanvasReturn {
   setEditingObjectId: (id: string | null) => void;
   marquee: MarqueeState | null;
   layers: CanvasLayer[];
+  alignmentGuides: AlignmentGuide[];
 
   // Actions
   addObject: (obj: Omit<CanvasObject, 'id' | 'zIndex'>) => CanvasObject;
@@ -178,7 +179,8 @@ function buildLayers(list: CanvasObject[]): CanvasLayer[] {
   return fromObjects;
 }
 
-export function useCanvas(): UseCanvasReturn {
+export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvasReturn {
+  const smartGuidesEnabled = options?.smartGuidesEnabled ?? true;
   const [objects, setObjects] = useState<CanvasObject[]>([]);
   const [layersState, setLayersState] = useState<CanvasLayer[]>([
     { id: DEFAULT_LAYER_ID, name: DEFAULT_LAYER_NAME, order: 0, objectCount: 0 },
@@ -199,6 +201,13 @@ export function useCanvas(): UseCanvasReturn {
     handle: ResizeHandle;
     position: Position;
   } | null>(null);
+  const [alignmentGuides, setAlignmentGuides] = useState<AlignmentGuide[]>([]);
+
+  useEffect(() => {
+    if (!smartGuidesEnabled) {
+      setAlignmentGuides([]);
+    }
+  }, [smartGuidesEnabled]);
 
   // Undo/Redo history
   const [past, setPast] = useState<CanvasObject[][]>([]);
@@ -239,6 +248,151 @@ export function useCanvas(): UseCanvasReturn {
       dRow: clamp(dRow, minDeltaRow, maxDeltaRow),
     };
   }, [clamp, gridSize.cols, gridSize.rows]);
+
+  const getBoundsForObjects = useCallback((list: CanvasObject[]) => {
+    let minCol = Number.POSITIVE_INFINITY;
+    let minRow = Number.POSITIVE_INFINITY;
+    let maxCol = Number.NEGATIVE_INFINITY;
+    let maxRow = Number.NEGATIVE_INFINITY;
+
+    for (const obj of list) {
+      const bbox = getBoundingBox(obj);
+      minCol = Math.min(minCol, bbox.col);
+      minRow = Math.min(minRow, bbox.row);
+      maxCol = Math.max(maxCol, bbox.col + bbox.width - 1);
+      maxRow = Math.max(maxRow, bbox.row + bbox.height - 1);
+    }
+
+    if (!Number.isFinite(minCol) || !Number.isFinite(minRow) || !Number.isFinite(maxCol) || !Number.isFinite(maxRow)) {
+      return null;
+    }
+
+    return {
+      left: minCol,
+      right: maxCol,
+      top: minRow,
+      bottom: maxRow,
+      centerX: Math.round((minCol + maxCol) / 2),
+      centerY: Math.round((minRow + maxRow) / 2),
+    };
+  }, []);
+
+  const computeSmartGuidesForBounds = useCallback((
+    movingBounds: { left: number; right: number; top: number; bottom: number; centerX: number; centerY: number },
+    staticObjects: CanvasObject[],
+    snapThreshold: number = 1
+  ) => {
+    const MAX_GUIDES_TOTAL = 3;
+    type CandidateGuide = AlignmentGuide & { diff: number };
+    let bestXDiff = Number.POSITIVE_INFINITY;
+    let bestYDiff = Number.POSITIVE_INFINITY;
+    let snapDx = 0;
+    let snapDy = 0;
+    const verticalCandidates: CandidateGuide[] = [];
+    const horizontalCandidates: CandidateGuide[] = [];
+
+    for (const staticObj of staticObjects) {
+      const bbox = getBoundingBox(staticObj);
+      const staticLeft = bbox.col;
+      const staticTop = bbox.row;
+      const staticRight = bbox.col + bbox.width - 1;
+      const staticBottom = bbox.row + bbox.height - 1;
+      const staticCenterX = Math.round((staticLeft + staticRight) / 2);
+      const staticCenterY = Math.round((staticTop + staticBottom) / 2);
+
+      const movingXCandidates = [movingBounds.left, movingBounds.centerX, movingBounds.right];
+      const staticXCandidates = [staticLeft, staticCenterX, staticRight];
+      for (const movingX of movingXCandidates) {
+        for (const staticX of staticXCandidates) {
+          const diff = staticX - movingX;
+          const absDiff = Math.abs(diff);
+          if (absDiff <= snapThreshold && absDiff < bestXDiff) {
+            bestXDiff = absDiff;
+            snapDx = diff;
+          }
+          if (absDiff <= snapThreshold) {
+            verticalCandidates.push({
+              orientation: 'vertical',
+              at: staticX,
+              start: Math.min(movingBounds.top, staticTop),
+              end: Math.max(movingBounds.bottom, staticBottom),
+              diff: absDiff,
+            });
+          }
+        }
+      }
+
+      const movingYCandidates = [movingBounds.top, movingBounds.centerY, movingBounds.bottom];
+      const staticYCandidates = [staticTop, staticCenterY, staticBottom];
+      for (const movingY of movingYCandidates) {
+        for (const staticY of staticYCandidates) {
+          const diff = staticY - movingY;
+          const absDiff = Math.abs(diff);
+          if (absDiff <= snapThreshold && absDiff < bestYDiff) {
+            bestYDiff = absDiff;
+            snapDy = diff;
+          }
+          if (absDiff <= snapThreshold) {
+            horizontalCandidates.push({
+              orientation: 'horizontal',
+              at: staticY,
+              start: Math.min(movingBounds.left, staticLeft),
+              end: Math.max(movingBounds.right, staticRight),
+              diff: absDiff,
+            });
+          }
+        }
+      }
+    }
+
+    const dedupeAndSelect = (
+      guides: CandidateGuide[],
+      orientation: 'vertical' | 'horizontal',
+      maxCount: number
+    ): CandidateGuide[] => {
+      const byAt = new Map<number, CandidateGuide>();
+      for (const guide of guides) {
+        const existing = byAt.get(guide.at);
+        if (!existing) {
+          byAt.set(guide.at, guide);
+          continue;
+        }
+        const existingSpan = existing.end - existing.start;
+        const currentSpan = guide.end - guide.start;
+        if (guide.diff < existing.diff || (guide.diff === existing.diff && currentSpan > existingSpan)) {
+          byAt.set(guide.at, {
+            ...guide,
+            start: Math.min(guide.start, existing.start),
+            end: Math.max(guide.end, existing.end),
+          });
+        } else {
+          byAt.set(guide.at, {
+            ...existing,
+            start: Math.min(guide.start, existing.start),
+            end: Math.max(guide.end, existing.end),
+          });
+        }
+      }
+
+      return [...byAt.values()]
+        .sort((a, b) => a.diff - b.diff || (b.end - b.start) - (a.end - a.start))
+        .slice(0, maxCount)
+        .map((guide) => ({ ...guide, orientation }));
+    };
+
+    const verticalGuides = dedupeAndSelect(verticalCandidates, 'vertical', MAX_GUIDES_TOTAL);
+    const horizontalGuides = dedupeAndSelect(horizontalCandidates, 'horizontal', MAX_GUIDES_TOTAL);
+    const guides = [...verticalGuides, ...horizontalGuides]
+      .sort((a, b) => a.diff - b.diff || (b.end - b.start) - (a.end - a.start))
+      .slice(0, MAX_GUIDES_TOTAL)
+      .map(({ diff: _diff, ...guide }) => guide);
+
+    return {
+      snapDx,
+      snapDy,
+      guides,
+    };
+  }, []);
 
   // Push current state to history before mutation
   const pushHistory = useCallback(() => {
@@ -1048,6 +1202,7 @@ export function useCanvas(): UseCanvasReturn {
 
   const handleCellMouseDown = useCallback((col: number, row: number, resizeHandle?: ResizeHandle | null) => {
     setCursor({ col, row });
+    setAlignmentGuides([]);
 
     // Handle resize handle click (skip text objects)
     if (resizeHandle && selectedIds.size === 1) {
@@ -1158,11 +1313,37 @@ export function useCanvas(): UseCanvasReturn {
         const dRow = newRow - anchorBox.row;
         const movingObjects = prev.filter(obj => movingIds.has(obj.id));
         const bounded = clampDeltaForObjects(movingObjects, dCol, dRow);
+        const staticObjects = prev.filter(obj => !movingIds.has(obj.id));
+
+        let finalDelta = bounded;
+        let nextGuides: AlignmentGuide[] = [];
+
+        if (smartGuidesEnabled && prev.length > 1 && staticObjects.length > 0) {
+          const movedProbe = movingObjects.map(obj => ({
+            ...obj,
+            position: { col: obj.position.col + bounded.dCol, row: obj.position.row + bounded.dRow },
+            endPosition: obj.endPosition
+              ? { col: obj.endPosition.col + bounded.dCol, row: obj.endPosition.row + bounded.dRow }
+              : obj.endPosition,
+          }));
+          const movingBounds = getBoundsForObjects(movedProbe);
+          if (movingBounds) {
+            const snap = computeSmartGuidesForBounds(movingBounds, staticObjects);
+            const snapped = clampDeltaForObjects(
+              movingObjects,
+              bounded.dCol + snap.snapDx,
+              bounded.dRow + snap.snapDy
+            );
+            finalDelta = snapped;
+            nextGuides = snap.guides;
+          }
+        }
+        setAlignmentGuides(smartGuidesEnabled ? nextGuides : []);
 
         const moved = prev.map(obj => {
           if (!movingIds.has(obj.id)) return obj;
-          const nextCol = obj.position.col + bounded.dCol;
-          const nextRow = obj.position.row + bounded.dRow;
+          const nextCol = obj.position.col + finalDelta.dCol;
+          const nextRow = obj.position.row + finalDelta.dRow;
           ensureSpace(nextCol + obj.width, nextRow + obj.height);
 
           if (obj.endPosition) {
@@ -1170,8 +1351,8 @@ export function useCanvas(): UseCanvasReturn {
               ...obj,
               position: { col: nextCol, row: nextRow },
               endPosition: {
-                col: obj.endPosition.col + bounded.dCol,
-                row: obj.endPosition.row + bounded.dRow,
+                col: obj.endPosition.col + finalDelta.dCol,
+                row: obj.endPosition.row + finalDelta.dRow,
               },
             };
           }
@@ -1319,11 +1500,51 @@ export function useCanvas(): UseCanvasReturn {
             break;
         }
 
+        if (smartGuidesEnabled && prev.length > 1) {
+          const staticObjects = prev.filter(other => other.id !== obj.id);
+          if (staticObjects.length > 0) {
+            const probeBounds = {
+              left: newCol,
+              right: newCol + newWidth - 1,
+              top: newRow,
+              bottom: newRow + newHeight - 1,
+              centerX: Math.round((newCol + (newCol + newWidth - 1)) / 2),
+              centerY: Math.round((newRow + (newRow + newHeight - 1)) / 2),
+            };
+            const snap = computeSmartGuidesForBounds(probeBounds, staticObjects);
+            const handleXActive = dragState.handle.includes('e') || dragState.handle.includes('w');
+            const handleYActive = dragState.handle.includes('n') || dragState.handle.includes('s');
+
+            if (handleXActive && snap.snapDx !== 0) {
+              if (dragState.handle.includes('e')) {
+                newWidth = Math.max(3, newWidth + snap.snapDx);
+              } else if (dragState.handle.includes('w')) {
+                newCol += snap.snapDx;
+                newWidth = Math.max(3, newWidth - snap.snapDx);
+              }
+            }
+            if (handleYActive && snap.snapDy !== 0) {
+              if (dragState.handle.includes('s')) {
+                newHeight = Math.max(3, newHeight + snap.snapDy);
+              } else if (dragState.handle.includes('n')) {
+                newRow += snap.snapDy;
+                newHeight = Math.max(3, newHeight - snap.snapDy);
+              }
+            }
+
+            const visibleGuides = snap.guides.filter(guide => (
+              (guide.orientation === 'vertical' && handleXActive) ||
+              (guide.orientation === 'horizontal' && handleYActive)
+            ));
+            setAlignmentGuides(visibleGuides);
+          }
+        }
+
         ensureSpace(newCol + newWidth, newRow + newHeight);
         return { ...obj, position: { col: newCol, row: newRow }, width: newWidth, height: newHeight };
       }))));
     }
-  }, [clampDeltaForObjects, dragState, ensureSpace, marquee, getConnectorAnchor, getConnectorAnchorForEdit, syncConnectorLines]);
+  }, [clampDeltaForObjects, computeSmartGuidesForBounds, dragState, ensureSpace, getBoundsForObjects, marquee, getConnectorAnchor, getConnectorAnchorForEdit, smartGuidesEnabled, syncConnectorLines]);
 
   const handleCellMouseUp = useCallback(() => {
     // Finalize marquee selection
@@ -1416,6 +1637,7 @@ export function useCanvas(): UseCanvasReturn {
 
     setDragState({ type: 'none' });
     setConnectorStartAnchor(null);
+    setAlignmentGuides([]);
   }, [dragState, cursor, tool, objects, ensureSpace, pushHistory, marquee, connectorStartAnchor, getConnectorAnchor, syncConnectorLines]);
 
   const handleKeyDown = useCallback((key: string) => {
@@ -1517,6 +1739,7 @@ export function useCanvas(): UseCanvasReturn {
     setEditingObjectId,
     marquee,
     layers,
+    alignmentGuides,
     addObject,
     updateObject,
     deleteObject,

@@ -54,6 +54,13 @@ export interface Position {
   row: number;
 }
 
+export interface AlignmentGuide {
+  orientation: 'vertical' | 'horizontal';
+  at: number;
+  start: number;
+  end: number;
+}
+
 export interface CanvasObject {
   id: string;
   type: ObjectType;

@@ -28,6 +28,20 @@ function App() {
   const [inspectorTab, setInspectorTab] = useState<'layers' | 'properties'>('properties');
 
   const {
+    visibleComponents,
+    sidebarCollapsed,
+    theme,
+    smartGuidesEnabled,
+    toggleComponent,
+    showAll,
+    hideAll,
+    resetDefaults,
+    toggleSidebar,
+    setTheme,
+    setSmartGuidesEnabled,
+  } = useSettings();
+
+  const {
     objects,
     grid,
     gridSize,
@@ -55,6 +69,7 @@ function App() {
     setEditingObjectId,
     loadObjects,
     marquee,
+    alignmentGuides,
     panViewport,
     layers,
     // Undo/Redo
@@ -73,25 +88,13 @@ function App() {
     renameLayer,
     reorderLayer,
     arrangeSelectionLayer,
-  } = useCanvas();
+  } = useCanvas({ smartGuidesEnabled });
 
   const [showExportModal, setShowExportModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [shareToast, setShareToast] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; onSelection: boolean } | null>(null);
-
-  const {
-    visibleComponents,
-    sidebarCollapsed,
-    theme,
-    toggleComponent,
-    showAll,
-    hideAll,
-    resetDefaults,
-    toggleSidebar,
-    setTheme,
-  } = useSettings();
 
   // Load objects from URL hash on mount
   useShareUrl(loadObjects);
@@ -289,6 +292,7 @@ function App() {
             setEditingObjectId={setEditingObjectId}
             onUpdateObject={updateObject}
             marquee={marquee}
+            alignmentGuides={alignmentGuides}
             panViewport={panViewport}
             onCanvasContextMenu={(x, y, onSelection) => setContextMenu({ x, y, onSelection })}
           />
@@ -392,8 +396,10 @@ function App() {
         <SettingsModal
           visibleComponents={visibleComponents}
           theme={theme}
+          smartGuidesEnabled={smartGuidesEnabled}
           onToggleComponent={toggleComponent}
           onThemeChange={setTheme}
+          onSmartGuidesChange={setSmartGuidesEnabled}
           onShowAll={showAll}
           onHideAll={hideAll}
           onResetDefaults={resetDefaults}
