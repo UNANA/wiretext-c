@@ -1,25 +1,25 @@
 # Wiretext
 
-Wiretext is a Unicode-first wireframing canvas for building UI mockups and diagrams using box-drawing characters.  
-Design in a visual editor, then export clean text output for docs, markdown, issues, and PRs.
+Wiretext is a Unicode-first wireframing canvas for building UI mockups and diagrams with box-drawing characters.
+Design visually, then export clean text for docs, markdown, issues, and PRs.
 
 ## What's New
 
-- **Smart Alignment Guides + snapping** while moving and resizing objects
-- **Toggle for Smart Guides** in Settings
+- **Pencil + Eraser workflow**: freehand sketching with `Pencil` plus cleanup passes with `Eraser`
+- **Smart alignment guides and snapping** while moving and resizing objects
 - **Layer grouping workflow** (`Group/Ungroup`) with better ordering controls
-- **Connector tool improvements** with object anchors and routed connector paths
+- **Connector improvements** with object anchors and routed connector paths
 
 ## Core Features
 
-- **Drawing tools**: Select, Box, Text, Line, Arrow, Connector
-- **30+ UI components**: inputs, layout blocks, display widgets, and navigation patterns
+- **Drawing tools**: Select, Box, Text, Line, Arrow, Connector, Pencil, Eraser
+- **Drawer mode for fast ideation**: sketch organic shapes and refine quickly
+- **30+ UI components**: input, layout, and display building blocks
 - **Layer-aware editing**: create layers from selection, move items between layers, reorder layers
-- **Power editing**: marquee selection, resize handles, undo/redo, copy/cut/paste, duplicate
-- **Viewport controls**: zoom and pan with a fixed canvas grid
+- **Power editing**: marquee select, resize handles, undo/redo, copy/cut/paste, duplicate
 - **Export formats**: plain text, Markdown, HTML, and GitHub-ready collapsible snippets
 - **Share links**: compressed URL payloads via `lz-string`
-- **Persistent preferences**: theme, sidebar state, visible component palette, smart guides toggle
+- **Persistent preferences**: theme, sidebar state, component visibility, smart guides
 
 ## Tech Stack
 
@@ -49,13 +49,13 @@ npm run dev
 
 Open [http://localhost:5173](http://localhost:5173).
 
-### Build for production
+### Build
 
 ```bash
 npm run build
 ```
 
-### Preview production build
+### Preview build
 
 ```bash
 npm run preview
@@ -77,6 +77,8 @@ npm run lint
 | `L` | Line tool |
 | `A` | Arrow tool |
 | `C` | Connector tool |
+| `N` | Pencil tool |
+| `E` | Eraser tool |
 | `P` | Toggle toolbar collapse |
 | `Delete` / `Backspace` | Delete selection |
 | `Ctrl/Cmd + Z` | Undo |
@@ -100,7 +102,7 @@ npm run lint
 src/
 ├── components/   # Canvas, toolbar, panels, modals
 ├── hooks/        # useCanvas, useSettings, useKeyboard, useShareUrl
-├── types/        # Object, tool, and component type definitions
+├── types/        # Tool/object/component definitions
 ├── utils/        # Unicode rendering and canvas math
 ├── App.tsx
 └── main.tsx
