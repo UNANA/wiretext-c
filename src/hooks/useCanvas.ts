@@ -14,7 +14,19 @@ import {
   calculateGridSize,
   generateId,
 } from '../utils/boxDrawing';
-import type { Grid, Tool, Position, CanvasObject, ComponentType, DragState, ResizeHandle, GridSize, CanvasLayer, AlignmentGuide } from '../types';
+import type {
+  Grid,
+  Tool,
+  Position,
+  CanvasObject,
+  ComponentType,
+  DragState,
+  ResizeHandle,
+  GridSize,
+  CanvasLayer,
+  AlignmentGuide,
+  GroupResizeHandle,
+} from '../types';
 
 export const TOOLS = {
   SELECT: 'select' as Tool,
@@ -68,7 +80,12 @@ export interface UseCanvasReturn {
   clearAll: () => void;
   selectObject: (id: string, addToSelection?: boolean) => void;
   clearSelection: () => void;
-  handleCellMouseDown: (col: number, row: number, handle?: ResizeHandle | null) => void;
+  handleCellMouseDown: (
+    col: number,
+    row: number,
+    handle?: ResizeHandle | null,
+    groupHandle?: GroupResizeHandle | null
+  ) => void;
   handleCellMouseMove: (col: number, row: number) => void;
   handleCellMouseUp: () => void;
   handleKeyDown: (key: string) => void;
@@ -300,6 +317,129 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       centerX: Math.round((minCol + maxCol) / 2),
       centerY: Math.round((minRow + maxRow) / 2),
     };
+  }, []);
+
+  const isGroupResizableObject = useCallback((obj: CanvasObject) => (
+    obj.type === 'box' || obj.type === 'component'
+  ), []);
+
+  const getGroupResizeDeltaLimits = useCallback((
+    selected: CanvasObject[],
+    handle: GroupResizeHandle
+  ) => {
+    const MIN_PANEL_SIZE = 3;
+    let minDeltaCol = Number.NEGATIVE_INFINITY;
+    let maxDeltaCol = Number.POSITIVE_INFINITY;
+    let minDeltaRow = Number.NEGATIVE_INFINITY;
+    let maxDeltaRow = Number.POSITIVE_INFINITY;
+
+    if (handle.verticalLine !== undefined) {
+      const leftIdSet = handle.leftObjectIds ? new Set(handle.leftObjectIds) : null;
+      const rightIdSet = handle.rightObjectIds ? new Set(handle.rightObjectIds) : null;
+      let leftAdjacent = selected.filter(obj => (
+        leftIdSet ? leftIdSet.has(obj.id) : obj.position.col + obj.width === handle.verticalLine
+      ));
+      let rightAdjacent = selected.filter(obj => (
+        rightIdSet ? rightIdSet.has(obj.id) : obj.position.col === handle.verticalLine
+      ));
+      if (leftAdjacent.length === 0 || rightAdjacent.length === 0) {
+        leftAdjacent = selected.filter(obj => (
+          obj.position.col + obj.width / 2 < handle.verticalLine!
+        ));
+        rightAdjacent = selected.filter(obj => (
+          obj.position.col + obj.width / 2 >= handle.verticalLine!
+        ));
+      }
+      const leftSlack = leftAdjacent.length > 0
+        ? Math.min(...leftAdjacent.map(obj => obj.width - MIN_PANEL_SIZE))
+        : 0;
+      const rightSlack = rightAdjacent.length > 0
+        ? Math.min(...rightAdjacent.map(obj => obj.width - MIN_PANEL_SIZE))
+        : 0;
+      minDeltaCol = -leftSlack;
+      maxDeltaCol = rightSlack;
+    }
+
+    if (handle.horizontalLine !== undefined) {
+      const topIdSet = handle.topObjectIds ? new Set(handle.topObjectIds) : null;
+      const bottomIdSet = handle.bottomObjectIds ? new Set(handle.bottomObjectIds) : null;
+      let topAdjacent = selected.filter(obj => (
+        topIdSet ? topIdSet.has(obj.id) : obj.position.row + obj.height === handle.horizontalLine
+      ));
+      let bottomAdjacent = selected.filter(obj => (
+        bottomIdSet ? bottomIdSet.has(obj.id) : obj.position.row === handle.horizontalLine
+      ));
+      if (topAdjacent.length === 0 || bottomAdjacent.length === 0) {
+        topAdjacent = selected.filter(obj => (
+          obj.position.row + obj.height / 2 < handle.horizontalLine!
+        ));
+        bottomAdjacent = selected.filter(obj => (
+          obj.position.row + obj.height / 2 >= handle.horizontalLine!
+        ));
+      }
+      const topSlack = topAdjacent.length > 0
+        ? Math.min(...topAdjacent.map(obj => obj.height - MIN_PANEL_SIZE))
+        : 0;
+      const bottomSlack = bottomAdjacent.length > 0
+        ? Math.min(...bottomAdjacent.map(obj => obj.height - MIN_PANEL_SIZE))
+        : 0;
+      minDeltaRow = -topSlack;
+      maxDeltaRow = bottomSlack;
+    }
+
+    return {
+      minDeltaCol: Number.isFinite(minDeltaCol) ? minDeltaCol : 0,
+      maxDeltaCol: Number.isFinite(maxDeltaCol) ? maxDeltaCol : 0,
+      minDeltaRow: Number.isFinite(minDeltaRow) ? minDeltaRow : 0,
+      maxDeltaRow: Number.isFinite(maxDeltaRow) ? maxDeltaRow : 0,
+    };
+  }, []);
+
+  const applyGroupResizeToObject = useCallback((
+    obj: CanvasObject,
+    handle: GroupResizeHandle,
+    dCol: number,
+    dRow: number
+  ): CanvasObject => {
+    let next = { ...obj };
+
+    if (handle.verticalLine !== undefined) {
+      const leftIdSet = handle.leftObjectIds ? new Set(handle.leftObjectIds) : null;
+      const rightIdSet = handle.rightObjectIds ? new Set(handle.rightObjectIds) : null;
+      let onLeftSide = leftIdSet ? leftIdSet.has(obj.id) : obj.position.col + obj.width === handle.verticalLine;
+      let onRightSide = rightIdSet ? rightIdSet.has(obj.id) : obj.position.col === handle.verticalLine;
+      if (!onLeftSide && !onRightSide) {
+        const centerX = obj.position.col + obj.width / 2;
+        onLeftSide = centerX < handle.verticalLine;
+        onRightSide = centerX >= handle.verticalLine;
+      }
+      if (onLeftSide) {
+        next.width = obj.width + dCol;
+      } else if (onRightSide) {
+        next.position = { ...next.position, col: obj.position.col + dCol };
+        next.width = obj.width - dCol;
+      }
+    }
+
+    if (handle.horizontalLine !== undefined) {
+      const topIdSet = handle.topObjectIds ? new Set(handle.topObjectIds) : null;
+      const bottomIdSet = handle.bottomObjectIds ? new Set(handle.bottomObjectIds) : null;
+      let onTopSide = topIdSet ? topIdSet.has(obj.id) : obj.position.row + obj.height === handle.horizontalLine;
+      let onBottomSide = bottomIdSet ? bottomIdSet.has(obj.id) : obj.position.row === handle.horizontalLine;
+      if (!onTopSide && !onBottomSide) {
+        const centerY = obj.position.row + obj.height / 2;
+        onTopSide = centerY < handle.horizontalLine;
+        onBottomSide = centerY >= handle.horizontalLine;
+      }
+      if (onTopSide) {
+        next.height = obj.height + dRow;
+      } else if (onBottomSide) {
+        next.position = { ...next.position, row: obj.position.row + dRow };
+        next.height = obj.height - dRow;
+      }
+    }
+
+    return next;
   }, []);
 
   const computeSmartGuidesForBounds = useCallback((
@@ -1262,9 +1402,31 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     setGridSize({ cols: INITIAL_COLS, rows: INITIAL_ROWS });
   }, [syncConnectorLines]);
 
-  const handleCellMouseDown = useCallback((col: number, row: number, resizeHandle?: ResizeHandle | null) => {
+  const handleCellMouseDown = useCallback((
+    col: number,
+    row: number,
+    resizeHandle?: ResizeHandle | null,
+    groupHandle?: GroupResizeHandle | null
+  ) => {
     setCursor({ col, row });
     setAlignmentGuides([]);
+
+    if (groupHandle && selectedIds.size >= 2) {
+      const selectedResizable = objects
+        .filter(obj => selectedIds.has(obj.id))
+        .filter(isGroupResizableObject);
+      if (selectedResizable.length >= 2) {
+        pushHistory();
+        setDragState({
+          type: 'resizingGroup',
+          startCol: col,
+          startRow: row,
+          handle: groupHandle,
+          initialObjects: selectedResizable,
+        });
+        return;
+      }
+    }
 
     // Handle resize handle click (skip text objects)
     if (resizeHandle && selectedIds.size === 1) {
@@ -1370,7 +1532,20 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       setTool(TOOLS.SELECT);
       return;
     }
-  }, [tool, objects, selectedIds, pendingComponent, selectObject, clearSelection, objects.length, ensureSpace, pushHistory, getConnectorAnchor, eraseAt]);
+  }, [
+    tool,
+    objects,
+    selectedIds,
+    pendingComponent,
+    selectObject,
+    clearSelection,
+    objects.length,
+    ensureSpace,
+    pushHistory,
+    getConnectorAnchor,
+    eraseAt,
+    isGroupResizableObject,
+  ]);
 
   const handleCellMouseMove = useCallback((col: number, row: number) => {
     if (dragState.type === 'drawing' && dragState.tool === TOOLS.CONNECTOR) {
@@ -1383,6 +1558,25 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     // Update marquee
     if (marquee) {
       setMarquee(prev => prev ? { ...prev, endCol: col, endRow: row } : null);
+      return;
+    }
+
+    if (dragState.type === 'resizingGroup') {
+      const baseById = new Map<string, CanvasObject>(
+        dragState.initialObjects.map(obj => [obj.id, obj])
+      );
+      const limits = getGroupResizeDeltaLimits(dragState.initialObjects, dragState.handle);
+      const rawDeltaCol = col - dragState.startCol;
+      const rawDeltaRow = row - dragState.startRow;
+      const clampedDeltaCol = Math.max(limits.minDeltaCol, Math.min(limits.maxDeltaCol, rawDeltaCol));
+      const clampedDeltaRow = Math.max(limits.minDeltaRow, Math.min(limits.maxDeltaRow, rawDeltaRow));
+
+      setObjects(prev => normalizeStackOrder(syncConnectorLines(prev.map(obj => {
+        if (!selectedIds.has(obj.id) || !isGroupResizableObject(obj)) return obj;
+        const base = baseById.get(obj.id);
+        if (!base) return obj;
+        return applyGroupResizeToObject(base, dragState.handle, clampedDeltaCol, clampedDeltaRow);
+      }))));
       return;
     }
 
@@ -1676,7 +1870,24 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
         return { ...obj, position: { col: newCol, row: newRow }, width: newWidth, height: newHeight };
       }))));
     }
-  }, [clampDeltaForObjects, computeSmartGuidesForBounds, dragState, ensureSpace, getBoundsForObjects, marquee, getConnectorAnchor, getConnectorAnchorForEdit, smartGuidesEnabled, syncConnectorLines, getPencilBounds, eraseAt]);
+  }, [
+    clampDeltaForObjects,
+    computeSmartGuidesForBounds,
+    dragState,
+    ensureSpace,
+    getBoundsForObjects,
+    marquee,
+    getConnectorAnchor,
+    getConnectorAnchorForEdit,
+    smartGuidesEnabled,
+    syncConnectorLines,
+    getPencilBounds,
+    eraseAt,
+    selectedIds,
+    isGroupResizableObject,
+    getGroupResizeDeltaLimits,
+    applyGroupResizeToObject,
+  ]);
 
   const handleCellMouseUp = useCallback(() => {
     // Finalize marquee selection

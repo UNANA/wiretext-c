@@ -153,7 +153,24 @@ export type DragState =
   | { type: 'none' }
   | { type: 'drawing'; startCol: number; startRow: number; tool: Tool; drawingObjectId?: string }
   | { type: 'moving'; objectId: string; offsetCol: number; offsetRow: number }
-  | { type: 'resizing'; objectId: string; handle: ResizeHandle };
+  | { type: 'resizing'; objectId: string; handle: ResizeHandle }
+  | {
+      type: 'resizingGroup';
+      startCol: number;
+      startRow: number;
+      handle: GroupResizeHandle;
+      initialObjects: CanvasObject[];
+    };
+
+export interface GroupResizeHandle {
+  axis: 'vertical' | 'horizontal' | 'intersection';
+  verticalLine?: number;
+  horizontalLine?: number;
+  leftObjectIds?: string[];
+  rightObjectIds?: string[];
+  topObjectIds?: string[];
+  bottomObjectIds?: string[];
+}
 
 export type ResizeHandle =
   | 'nw' | 'n' | 'ne'

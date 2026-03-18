@@ -1,5 +1,14 @@
 import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
-import type { Grid, Position, CanvasObject, DragState, ResizeHandle, Tool, AlignmentGuide } from '../types';
+import type {
+  Grid,
+  Position,
+  CanvasObject,
+  DragState,
+  ResizeHandle,
+  Tool,
+  AlignmentGuide,
+  GroupResizeHandle,
+} from '../types';
 import { compareObjectsByStackOrder, getLineLength, hitTest } from '../utils/boxDrawing';
 import type { MarqueeState } from '../hooks/useCanvas';
 
@@ -62,7 +71,12 @@ interface CanvasProps {
   panY: number;
   cursor: Position;
   gridSize: { cols: number; rows: number };
-  handleCellMouseDown: (col: number, row: number, handle?: ResizeHandle | null) => void;
+  handleCellMouseDown: (
+    col: number,
+    row: number,
+    handle?: ResizeHandle | null,
+    groupHandle?: GroupResizeHandle | null
+  ) => void;
   handleCellMouseMove: (col: number, row: number) => void;
   handleCellMouseUp: () => void;
   editingObjectId?: string | null;
@@ -72,9 +86,12 @@ interface CanvasProps {
   alignmentGuides?: AlignmentGuide[];
   panViewport?: (dx: number, dy: number) => void;
   onCanvasContextMenu?: (x: number, y: number, onSelection: boolean) => void;
+  showSelectionControls?: boolean;
 }
 
 const HANDLE_SIZE = 7;
+const GROUP_HANDLE_SIZE = HANDLE_SIZE + 3;
+const INTERSECTION_HANDLE_SIZE = HANDLE_SIZE + 4;
 
 // Hook to measure character dimensions
 function useCharMetrics(zoom: number) {
@@ -115,6 +132,7 @@ const Canvas: React.FC<CanvasProps> = ({
   alignmentGuides = [],
   panViewport,
   onCanvasContextMenu,
+  showSelectionControls = true,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -241,6 +259,431 @@ const Canvas: React.FC<CanvasProps> = ({
       .filter(obj => selectedIds.has(obj.id))
       .sort(compareObjectsByStackOrder);
   }, [objects, selectedIds]);
+
+  const groupResizeModel = useMemo(() => {
+    const resizable = selectedObjects.filter(obj => obj.type === 'box' || obj.type === 'component');
+    if (resizable.length < 2) return null;
+    const groupCenterCol = Math.round((
+      Math.min(...resizable.map(obj => obj.position.col))
+      + Math.max(...resizable.map(obj => obj.position.col + obj.width - 1))
+    ) / 2);
+    const groupCenterRow = Math.round((
+      Math.min(...resizable.map(obj => obj.position.row))
+      + Math.max(...resizable.map(obj => obj.position.row + obj.height - 1))
+    ) / 2);
+
+    const verticalSegments: Array<{
+      line: number;
+      visualLine: number;
+      start: number;
+      end: number;
+      leftObjectIds: string[];
+      rightObjectIds: string[];
+    }> = [];
+    const horizontalSegments: Array<{
+      line: number;
+      visualLine: number;
+      start: number;
+      end: number;
+      topObjectIds: string[];
+      bottomObjectIds: string[];
+    }> = [];
+
+    for (let i = 0; i < resizable.length; i++) {
+      for (let j = i + 1; j < resizable.length; j++) {
+        const a = resizable[i];
+        const b = resizable[j];
+
+        const aRightLine = a.position.col + a.width;
+        const bLeftLine = b.position.col;
+        const bRightLine = b.position.col + b.width;
+        const aLeftLine = a.position.col;
+        const overlapRowsStart = Math.max(a.position.row, b.position.row);
+        const overlapRowsEnd = Math.min(
+          a.position.row + a.height - 1,
+          b.position.row + b.height - 1
+        );
+        if (overlapRowsStart <= overlapRowsEnd) {
+          if (aRightLine === bLeftLine) {
+            verticalSegments.push({
+              line: aRightLine,
+              visualLine: aRightLine,
+              start: overlapRowsStart,
+              end: overlapRowsEnd,
+              leftObjectIds: [a.id],
+              rightObjectIds: [b.id],
+            });
+          } else if (bRightLine === aLeftLine) {
+            verticalSegments.push({
+              line: bRightLine,
+              visualLine: bRightLine,
+              start: overlapRowsStart,
+              end: overlapRowsEnd,
+              leftObjectIds: [b.id],
+              rightObjectIds: [a.id],
+            });
+          } else if (aRightLine < bLeftLine) {
+            const visual = (aRightLine + bLeftLine) / 2;
+            verticalSegments.push({
+              line: Math.round(visual),
+              visualLine: visual,
+              start: overlapRowsStart,
+              end: overlapRowsEnd,
+              leftObjectIds: [a.id],
+              rightObjectIds: [b.id],
+            });
+          } else if (bRightLine < aLeftLine) {
+            const visual = (bRightLine + aLeftLine) / 2;
+            verticalSegments.push({
+              line: Math.round(visual),
+              visualLine: visual,
+              start: overlapRowsStart,
+              end: overlapRowsEnd,
+              leftObjectIds: [b.id],
+              rightObjectIds: [a.id],
+            });
+          }
+        }
+
+        const aBottomLine = a.position.row + a.height;
+        const bTopLine = b.position.row;
+        const bBottomLine = b.position.row + b.height;
+        const aTopLine = a.position.row;
+        const overlapColsStart = Math.max(a.position.col, b.position.col);
+        const overlapColsEnd = Math.min(
+          a.position.col + a.width - 1,
+          b.position.col + b.width - 1
+        );
+        if (overlapColsStart <= overlapColsEnd) {
+          if (aBottomLine === bTopLine) {
+            horizontalSegments.push({
+              line: aBottomLine,
+              visualLine: aBottomLine,
+              start: overlapColsStart,
+              end: overlapColsEnd,
+              topObjectIds: [a.id],
+              bottomObjectIds: [b.id],
+            });
+          } else if (bBottomLine === aTopLine) {
+            horizontalSegments.push({
+              line: bBottomLine,
+              visualLine: bBottomLine,
+              start: overlapColsStart,
+              end: overlapColsEnd,
+              topObjectIds: [b.id],
+              bottomObjectIds: [a.id],
+            });
+          } else if (aBottomLine < bTopLine) {
+            const visual = (aBottomLine + bTopLine) / 2;
+            horizontalSegments.push({
+              line: Math.floor((aBottomLine + bTopLine) / 2),
+              visualLine: visual,
+              start: overlapColsStart,
+              end: overlapColsEnd,
+              topObjectIds: [a.id],
+              bottomObjectIds: [b.id],
+            });
+          } else if (bBottomLine < aTopLine) {
+            const visual = (bBottomLine + aTopLine) / 2;
+            horizontalSegments.push({
+              line: Math.floor((bBottomLine + aTopLine) / 2),
+              visualLine: visual,
+              start: overlapColsStart,
+              end: overlapColsEnd,
+              topObjectIds: [b.id],
+              bottomObjectIds: [a.id],
+            });
+          }
+        }
+      }
+    }
+
+    const mergeVerticalSegments = (segments: typeof verticalSegments) => {
+      const grouped = new Map<number, typeof verticalSegments>();
+      for (const segment of segments) {
+        const bucket = grouped.get(segment.line) ?? [];
+        bucket.push(segment);
+        grouped.set(segment.line, bucket);
+      }
+
+      const merged: typeof verticalSegments = [];
+      grouped.forEach((bucket, line) => {
+        const sorted = [...bucket].sort((a, b) => a.start - b.start);
+        let current = {
+          ...sorted[0],
+          leftObjectIds: [...sorted[0].leftObjectIds],
+          rightObjectIds: [...sorted[0].rightObjectIds],
+          visualLineValues: [sorted[0].visualLine],
+        };
+        for (let i = 1; i < sorted.length; i++) {
+          const next = sorted[i];
+          if (next.start <= current.end + 1) {
+            current.end = Math.max(current.end, next.end);
+            current.leftObjectIds = [...new Set([...current.leftObjectIds, ...next.leftObjectIds])];
+            current.rightObjectIds = [...new Set([...current.rightObjectIds, ...next.rightObjectIds])];
+            current.visualLineValues.push(next.visualLine);
+          } else {
+            merged.push({
+              line: current.line,
+              visualLine: current.visualLineValues.reduce((a, b) => a + b, 0) / current.visualLineValues.length,
+              start: current.start,
+              end: current.end,
+              leftObjectIds: current.leftObjectIds,
+              rightObjectIds: current.rightObjectIds,
+            });
+            current = {
+              ...next,
+              leftObjectIds: [...next.leftObjectIds],
+              rightObjectIds: [...next.rightObjectIds],
+              visualLineValues: [next.visualLine],
+            };
+          }
+        }
+        merged.push({
+          line: current.line,
+          visualLine: current.visualLineValues.reduce((a, b) => a + b, 0) / current.visualLineValues.length,
+          start: current.start,
+          end: current.end,
+          leftObjectIds: current.leftObjectIds,
+          rightObjectIds: current.rightObjectIds,
+        });
+      });
+      return merged;
+    };
+
+    const mergeHorizontalSegments = (segments: typeof horizontalSegments) => {
+      const grouped = new Map<number, typeof horizontalSegments>();
+      for (const segment of segments) {
+        const bucket = grouped.get(segment.line) ?? [];
+        bucket.push(segment);
+        grouped.set(segment.line, bucket);
+      }
+
+      const merged: typeof horizontalSegments = [];
+      grouped.forEach((bucket, line) => {
+        const sorted = [...bucket].sort((a, b) => a.start - b.start);
+        let current = {
+          ...sorted[0],
+          topObjectIds: [...sorted[0].topObjectIds],
+          bottomObjectIds: [...sorted[0].bottomObjectIds],
+          visualLineValues: [sorted[0].visualLine],
+        };
+        for (let i = 1; i < sorted.length; i++) {
+          const next = sorted[i];
+          if (next.start <= current.end + 1) {
+            current.end = Math.max(current.end, next.end);
+            current.topObjectIds = [...new Set([...current.topObjectIds, ...next.topObjectIds])];
+            current.bottomObjectIds = [...new Set([...current.bottomObjectIds, ...next.bottomObjectIds])];
+            current.visualLineValues.push(next.visualLine);
+          } else {
+            merged.push({
+              line: current.line,
+              visualLine: current.visualLineValues.reduce((a, b) => a + b, 0) / current.visualLineValues.length,
+              start: current.start,
+              end: current.end,
+              topObjectIds: current.topObjectIds,
+              bottomObjectIds: current.bottomObjectIds,
+            });
+            current = {
+              ...next,
+              topObjectIds: [...next.topObjectIds],
+              bottomObjectIds: [...next.bottomObjectIds],
+              visualLineValues: [next.visualLine],
+            };
+          }
+        }
+        merged.push({
+          line: current.line,
+          visualLine: current.visualLineValues.reduce((a, b) => a + b, 0) / current.visualLineValues.length,
+          start: current.start,
+          end: current.end,
+          topObjectIds: current.topObjectIds,
+          bottomObjectIds: current.bottomObjectIds,
+        });
+      });
+      return merged;
+    };
+
+    const mergedVertical = mergeVerticalSegments(verticalSegments);
+    const mergedHorizontal = mergeHorizontalSegments(horizontalSegments);
+
+    if (mergedVertical.length === 0 && mergedHorizontal.length === 0 && resizable.length === 2) {
+      const [a, b] = resizable;
+      const aCenterX = a.position.col + a.width / 2;
+      const bCenterX = b.position.col + b.width / 2;
+      const aCenterY = a.position.row + a.height / 2;
+      const bCenterY = b.position.row + b.height / 2;
+      const horizontalSplit = Math.abs(aCenterX - bCenterX) >= Math.abs(aCenterY - bCenterY);
+
+      if (horizontalSplit) {
+        const leftObj = aCenterX <= bCenterX ? a : b;
+        const rightObj = leftObj.id === a.id ? b : a;
+        const leftBoundary = leftObj.position.col + leftObj.width;
+        const rightBoundary = rightObj.position.col;
+        const splitCol = Math.round((leftBoundary + rightBoundary) / 2);
+        const spanStart = Math.min(leftObj.position.row, rightObj.position.row);
+        const spanEnd = Math.max(
+          leftObj.position.row + leftObj.height - 1,
+          rightObj.position.row + rightObj.height - 1
+        );
+        mergedVertical.push({
+          line: splitCol,
+          visualLine: (leftBoundary + rightBoundary) / 2,
+          start: spanStart,
+          end: spanEnd,
+          leftObjectIds: [leftObj.id],
+          rightObjectIds: [rightObj.id],
+        });
+      } else {
+        const topObj = aCenterY <= bCenterY ? a : b;
+        const bottomObj = topObj.id === a.id ? b : a;
+        const topBoundary = topObj.position.row + topObj.height;
+        const bottomBoundary = bottomObj.position.row;
+        const splitRow = Math.floor((topBoundary + bottomBoundary) / 2);
+        const spanStart = Math.min(topObj.position.col, bottomObj.position.col);
+        const spanEnd = Math.max(
+          topObj.position.col + topObj.width - 1,
+          bottomObj.position.col + bottomObj.width - 1
+        );
+        mergedHorizontal.push({
+          line: splitRow,
+          visualLine: (topBoundary + bottomBoundary) / 2,
+          start: spanStart,
+          end: spanEnd,
+          topObjectIds: [topObj.id],
+          bottomObjectIds: [bottomObj.id],
+        });
+      }
+    }
+
+    if (mergedVertical.length === 0 && resizable.length >= 2) {
+      const sorted = [...resizable].sort(
+        (a, b) => (a.position.col + a.width / 2) - (b.position.col + b.width / 2)
+      );
+      const splitIndex = Math.floor(sorted.length / 2);
+      const leftGroup = sorted.slice(0, splitIndex);
+      const rightGroup = sorted.slice(splitIndex);
+      if (leftGroup.length > 0 && rightGroup.length > 0) {
+        const leftBoundary = Math.max(...leftGroup.map(obj => obj.position.col + obj.width));
+        const rightBoundary = Math.min(...rightGroup.map(obj => obj.position.col));
+        const visual = leftBoundary <= rightBoundary ? (leftBoundary + rightBoundary) / 2 : leftBoundary;
+        const spanStart = Math.min(...resizable.map(obj => obj.position.row));
+        const spanEnd = Math.max(...resizable.map(obj => obj.position.row + obj.height - 1));
+        mergedVertical.push({
+          line: Math.round(visual),
+          visualLine: visual,
+          start: spanStart,
+          end: spanEnd,
+          leftObjectIds: leftGroup.map(obj => obj.id),
+          rightObjectIds: rightGroup.map(obj => obj.id),
+        });
+      }
+    }
+
+    if (mergedHorizontal.length === 0 && resizable.length >= 2) {
+      const sorted = [...resizable].sort(
+        (a, b) => (a.position.row + a.height / 2) - (b.position.row + b.height / 2)
+      );
+      const splitIndex = Math.floor(sorted.length / 2);
+      const topGroup = sorted.slice(0, splitIndex);
+      const bottomGroup = sorted.slice(splitIndex);
+      if (topGroup.length > 0 && bottomGroup.length > 0) {
+        const topBoundary = Math.max(...topGroup.map(obj => obj.position.row + obj.height));
+        const bottomBoundary = Math.min(...bottomGroup.map(obj => obj.position.row));
+        const visual = topBoundary <= bottomBoundary ? (topBoundary + bottomBoundary) / 2 : topBoundary;
+        const spanStart = Math.min(...resizable.map(obj => obj.position.col));
+        const spanEnd = Math.max(...resizable.map(obj => obj.position.col + obj.width - 1));
+        mergedHorizontal.push({
+          line: Math.floor(visual),
+          visualLine: visual,
+          start: spanStart,
+          end: spanEnd,
+          topObjectIds: topGroup.map(obj => obj.id),
+          bottomObjectIds: bottomGroup.map(obj => obj.id),
+        });
+      }
+    }
+
+    const intersections: Array<{
+      col: number;
+      row: number;
+      visualCol: number;
+      visualRow: number;
+      verticalLine: number;
+      horizontalLine: number;
+      leftObjectIds: string[];
+      rightObjectIds: string[];
+      topObjectIds: string[];
+      bottomObjectIds: string[];
+    }> = [];
+    for (const v of mergedVertical) {
+      for (const h of mergedHorizontal) {
+        if (v.line >= h.start && v.line <= h.end && h.line >= v.start && h.line <= v.end) {
+          intersections.push({
+            col: v.line,
+            row: h.line,
+            visualCol: v.visualLine,
+            visualRow: h.visualLine,
+            verticalLine: v.line,
+            horizontalLine: h.line,
+            leftObjectIds: v.leftObjectIds,
+            rightObjectIds: v.rightObjectIds,
+            topObjectIds: h.topObjectIds,
+            bottomObjectIds: h.bottomObjectIds,
+          });
+        }
+      }
+    }
+
+    let centerMultiHandle: null | {
+      col: number;
+      row: number;
+      verticalLine: number;
+      horizontalLine: number;
+      leftObjectIds: string[];
+      rightObjectIds: string[];
+      topObjectIds: string[];
+      bottomObjectIds: string[];
+    } = null;
+
+    if (resizable.length >= 3 && mergedVertical.length > 0 && mergedHorizontal.length > 0) {
+      const nearestVertical = [...mergedVertical].sort(
+        (a, b) => Math.abs(a.line - groupCenterCol) - Math.abs(b.line - groupCenterCol)
+      )[0];
+      const nearestHorizontal = [...mergedHorizontal].sort(
+        (a, b) => Math.abs(a.line - groupCenterRow) - Math.abs(b.line - groupCenterRow)
+      )[0];
+
+      centerMultiHandle = {
+        // Anchor the center handle to the active split-line intersection so it moves with drags.
+        col: nearestVertical.line,
+        row: nearestHorizontal.line,
+        visualCol: nearestVertical.visualLine,
+        visualRow: nearestHorizontal.visualLine,
+        verticalLine: nearestVertical.line,
+        horizontalLine: nearestHorizontal.line,
+        leftObjectIds: nearestVertical.leftObjectIds,
+        rightObjectIds: nearestVertical.rightObjectIds,
+        topObjectIds: nearestHorizontal.topObjectIds,
+        bottomObjectIds: nearestHorizontal.bottomObjectIds,
+      };
+    }
+
+    const minCol = Math.min(...resizable.map(obj => obj.position.col));
+    const minRow = Math.min(...resizable.map(obj => obj.position.row));
+    const maxCol = Math.max(...resizable.map(obj => obj.position.col + obj.width - 1));
+    const maxRow = Math.max(...resizable.map(obj => obj.position.row + obj.height - 1));
+
+    return {
+      bounds: { minCol, minRow, maxCol, maxRow },
+      vertical: mergedVertical,
+      horizontal: mergedHorizontal,
+      intersections,
+      centerMultiHandle,
+      selectedIds: new Set(resizable.map(obj => obj.id)),
+      resizable,
+    };
+  }, [selectedObjects]);
 
   const connectorAnchors = useMemo(() => {
     if (tool !== 'connector') return [];
@@ -492,6 +935,72 @@ const Canvas: React.FC<CanvasProps> = ({
     }
   }, [handleCellMouseDown]);
 
+  const handleGroupResizeDown = useCallback((
+    e: React.MouseEvent,
+    col: number,
+    row: number,
+    groupHandle: GroupResizeHandle
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+    const resizableSelected = selectedObjects.filter(
+      obj => obj.type === 'box' || obj.type === 'component'
+    );
+
+    let nextHandle: GroupResizeHandle = { ...groupHandle };
+
+    if (groupHandle.verticalLine !== undefined) {
+      const line = groupHandle.verticalLine;
+      const rowFiltered = resizableSelected.filter(obj => (
+        row >= obj.position.row && row <= obj.position.row + obj.height - 1
+      ));
+      let leftIds = rowFiltered
+        .filter(obj => obj.position.col + obj.width / 2 < line)
+        .map(obj => obj.id);
+      let rightIds = rowFiltered
+        .filter(obj => obj.position.col + obj.width / 2 >= line)
+        .map(obj => obj.id);
+      if (leftIds.length === 0 || rightIds.length === 0) {
+        leftIds = resizableSelected
+          .filter(obj => obj.position.col + obj.width / 2 < line)
+          .map(obj => obj.id);
+        rightIds = resizableSelected
+          .filter(obj => obj.position.col + obj.width / 2 >= line)
+          .map(obj => obj.id);
+      }
+      if (leftIds.length > 0 && rightIds.length > 0) {
+        nextHandle = { ...nextHandle, leftObjectIds: leftIds, rightObjectIds: rightIds };
+      }
+    }
+
+    if (groupHandle.horizontalLine !== undefined) {
+      const line = groupHandle.horizontalLine;
+      const colFiltered = resizableSelected.filter(obj => (
+        col >= obj.position.col && col <= obj.position.col + obj.width - 1
+      ));
+      let topIds = colFiltered
+        .filter(obj => obj.position.row + obj.height / 2 < line)
+        .map(obj => obj.id);
+      let bottomIds = colFiltered
+        .filter(obj => obj.position.row + obj.height / 2 >= line)
+        .map(obj => obj.id);
+      if (topIds.length === 0 || bottomIds.length === 0) {
+        topIds = resizableSelected
+          .filter(obj => obj.position.row + obj.height / 2 < line)
+          .map(obj => obj.id);
+        bottomIds = resizableSelected
+          .filter(obj => obj.position.row + obj.height / 2 >= line)
+          .map(obj => obj.id);
+      }
+      if (topIds.length > 0 && bottomIds.length > 0) {
+        nextHandle = { ...nextHandle, topObjectIds: topIds, bottomObjectIds: bottomIds };
+      }
+    }
+
+    handleCellMouseDown(col, row, null, nextHandle);
+  }, [handleCellMouseDown, selectedObjects]);
+
   return (
     <div
       className="relative flex-1 overflow-hidden bg-bg"
@@ -572,7 +1081,209 @@ const Canvas: React.FC<CanvasProps> = ({
       ))}
 
       {/* Selection overlays - different styles per object type */}
-      {selectedObjects.map(obj => {
+      {showSelectionControls && groupResizeModel && (
+        <>
+          <div
+            className="absolute rounded-sm pointer-events-none"
+            style={{
+              left: groupResizeModel.bounds.minCol * charWidth * zoom + panX,
+              top: groupResizeModel.bounds.minRow * lineHeight * zoom + panY,
+              width: (groupResizeModel.bounds.maxCol - groupResizeModel.bounds.minCol + 1) * charWidth * zoom,
+              height: (groupResizeModel.bounds.maxRow - groupResizeModel.bounds.minRow + 1) * lineHeight * zoom,
+              border: '1px solid rgb(var(--color-selection-border, 108 138 255) / 0.65)',
+              boxShadow: '0 0 0 1px rgb(var(--color-selection, 108 138 255) / 0.12) inset',
+            }}
+          />
+
+          {groupResizeModel.vertical.map((segment, idx) => {
+            const computedLeftIds = groupResizeModel.resizable
+              .filter(obj => (
+                obj.position.col + obj.width === segment.line
+                && obj.position.row <= segment.end
+                && (obj.position.row + obj.height - 1) >= segment.start
+              ))
+              .map(obj => obj.id);
+            const computedRightIds = groupResizeModel.resizable
+              .filter(obj => (
+                obj.position.col === segment.line
+                && obj.position.row <= segment.end
+                && (obj.position.row + obj.height - 1) >= segment.start
+              ))
+              .map(obj => obj.id);
+            const leftIds = segment.leftObjectIds ?? computedLeftIds;
+            const rightIds = segment.rightObjectIds ?? computedRightIds;
+            const splitX = segment.visualLine * charWidth * zoom + panX;
+            const top = segment.start * lineHeight * zoom + panY;
+            const height = (segment.end - segment.start + 1) * lineHeight * zoom;
+            const segmentMidY = top + height / 2;
+            const midRow = Math.round((segment.start + segment.end) / 2);
+            return (
+              <div key={`v-${segment.line}-${idx}`}>
+                <div
+                  className="absolute pointer-events-none"
+                  style={{
+                    left: splitX - 0.5,
+                    top,
+                    width: 1,
+                    height,
+                    background: 'rgb(var(--color-selection-border, 108 138 255) / 0.7)',
+                  }}
+                />
+                <div
+                  className="absolute pointer-events-auto hover:bg-white"
+                  style={{
+                    left: splitX - GROUP_HANDLE_SIZE / 2,
+                    top: segmentMidY - GROUP_HANDLE_SIZE / 2,
+                    width: GROUP_HANDLE_SIZE,
+                    height: GROUP_HANDLE_SIZE,
+                    background: 'rgb(var(--color-accent, 108 138 255))',
+                    border: '1px solid rgb(var(--color-bg, 10 10 15))',
+                    borderRadius: '9999px',
+                    boxShadow: '0 0 0 1px rgb(var(--color-selection, 108 138 255) / 0.15)',
+                    cursor: 'col-resize',
+                    zIndex: 60,
+                    touchAction: 'none',
+                  }}
+                  onMouseDownCapture={(e) => handleGroupResizeDown(e, segment.line, midRow, {
+                    axis: 'vertical',
+                    verticalLine: segment.line,
+                    leftObjectIds: leftIds,
+                    rightObjectIds: rightIds,
+                  })}
+                />
+              </div>
+            );
+          })}
+
+          {groupResizeModel.horizontal.map((segment, idx) => {
+            const computedTopIds = groupResizeModel.resizable
+              .filter(obj => (
+                obj.position.row + obj.height === segment.line
+                && obj.position.col <= segment.end
+                && (obj.position.col + obj.width - 1) >= segment.start
+              ))
+              .map(obj => obj.id);
+            const computedBottomIds = groupResizeModel.resizable
+              .filter(obj => (
+                obj.position.row === segment.line
+                && obj.position.col <= segment.end
+                && (obj.position.col + obj.width - 1) >= segment.start
+              ))
+              .map(obj => obj.id);
+            const topIds = segment.topObjectIds ?? computedTopIds;
+            const bottomIds = segment.bottomObjectIds ?? computedBottomIds;
+            const left = segment.start * charWidth * zoom + panX;
+            const width = (segment.end - segment.start + 1) * charWidth * zoom;
+            const splitY = segment.visualLine * lineHeight * zoom + panY;
+            const segmentMidX = left + width / 2;
+            const midCol = Math.round((segment.start + segment.end) / 2);
+            return (
+              <div key={`h-${segment.line}-${idx}`}>
+                <div
+                  className="absolute pointer-events-none"
+                  style={{
+                    left,
+                    top: splitY - 0.5,
+                    width,
+                    height: 1,
+                    background: 'rgb(var(--color-selection-border, 108 138 255) / 0.7)',
+                  }}
+                />
+                <div
+                  className="absolute pointer-events-auto hover:bg-white"
+                  style={{
+                    left: segmentMidX - GROUP_HANDLE_SIZE / 2,
+                    top: splitY - GROUP_HANDLE_SIZE / 2,
+                    width: GROUP_HANDLE_SIZE,
+                    height: GROUP_HANDLE_SIZE,
+                    background: 'rgb(var(--color-accent, 108 138 255))',
+                    border: '1px solid rgb(var(--color-bg, 10 10 15))',
+                    borderRadius: '9999px',
+                    boxShadow: '0 0 0 1px rgb(var(--color-selection, 108 138 255) / 0.15)',
+                    cursor: 'row-resize',
+                    zIndex: 60,
+                    touchAction: 'none',
+                  }}
+                  onMouseDownCapture={(e) => handleGroupResizeDown(e, midCol, segment.line, {
+                    axis: 'horizontal',
+                    horizontalLine: segment.line,
+                    topObjectIds: topIds,
+                    bottomObjectIds: bottomIds,
+                  })}
+                />
+              </div>
+            );
+          })}
+
+          {groupResizeModel.intersections.map((point, idx) => (
+            <div
+              key={`x-${point.verticalLine}-${point.horizontalLine}-${idx}`}
+              className="absolute pointer-events-auto hover:bg-white"
+              style={{
+                left: point.visualCol * charWidth * zoom + panX - INTERSECTION_HANDLE_SIZE / 2,
+                top: point.visualRow * lineHeight * zoom + panY - INTERSECTION_HANDLE_SIZE / 2,
+                width: INTERSECTION_HANDLE_SIZE,
+                height: INTERSECTION_HANDLE_SIZE,
+                background: 'rgb(var(--color-accent, 108 138 255))',
+                border: '1px solid rgb(var(--color-bg, 10 10 15))',
+                borderRadius: '50%',
+                boxShadow: '0 0 0 1px rgb(var(--color-selection, 108 138 255) / 0.15)',
+                cursor: 'nwse-resize',
+                zIndex: 60,
+                touchAction: 'none',
+              }}
+              onMouseDownCapture={(e) => handleGroupResizeDown(e, point.col, point.row, {
+                axis: 'intersection',
+                verticalLine: point.verticalLine,
+                horizontalLine: point.horizontalLine,
+                leftObjectIds: point.leftObjectIds,
+                rightObjectIds: point.rightObjectIds,
+                topObjectIds: point.topObjectIds,
+                bottomObjectIds: point.bottomObjectIds,
+              })}
+            />
+          ))}
+
+          {groupResizeModel.centerMultiHandle && (() => {
+            const centerHandle = groupResizeModel.centerMultiHandle;
+            return (
+              <div
+                className="absolute pointer-events-auto hover:bg-white"
+                style={{
+                  left: centerHandle.visualCol * charWidth * zoom + panX - GROUP_HANDLE_SIZE / 2,
+                  top: centerHandle.visualRow * lineHeight * zoom + panY - GROUP_HANDLE_SIZE / 2,
+                  width: GROUP_HANDLE_SIZE,
+                  height: GROUP_HANDLE_SIZE,
+                  background: 'rgb(var(--color-accent, 108 138 255))',
+                  border: '1px solid rgb(var(--color-bg, 10 10 15))',
+                  borderRadius: '50%',
+                  boxShadow: '0 0 0 1px rgb(var(--color-selection, 108 138 255) / 0.2)',
+                  cursor: 'move',
+                  zIndex: 65,
+                  touchAction: 'none',
+                }}
+                onMouseDownCapture={(e) => handleGroupResizeDown(
+                  e,
+                  centerHandle.col,
+                  centerHandle.row,
+                  {
+                    axis: 'intersection',
+                    verticalLine: centerHandle.verticalLine,
+                    horizontalLine: centerHandle.horizontalLine,
+                    leftObjectIds: centerHandle.leftObjectIds,
+                    rightObjectIds: centerHandle.rightObjectIds,
+                    topObjectIds: centerHandle.topObjectIds,
+                    bottomObjectIds: centerHandle.bottomObjectIds,
+                  }
+                )}
+                title="Multi-resize (both axes)"
+              />
+            );
+          })()}
+        </>
+      )}
+
+      {showSelectionControls && selectedObjects.map(obj => {
         const left = obj.position.col * charWidth * zoom + panX;
         const top = obj.position.row * lineHeight * zoom + panY;
         const width = obj.width * charWidth * zoom;
@@ -580,6 +1291,7 @@ const Canvas: React.FC<CanvasProps> = ({
 
         // Box/Component: Full box with 8 resize handles
         if (obj.type === 'box' || obj.type === 'component') {
+          const useGroupHandles = !!groupResizeModel && groupResizeModel.selectedIds.has(obj.id);
           return (
             <div
               key={obj.id}
@@ -593,8 +1305,7 @@ const Canvas: React.FC<CanvasProps> = ({
                 background: 'rgb(var(--color-selection, 108 138 255) / 0.15)',
               }}
             >
-              {/* 8 Resize handles */}
-              {([
+              {!useGroupHandles && ([
                 { key: 'nw' as ResizeHandle, left: 4, top: 4 },
                 { key: 'ne' as ResizeHandle, left: width - 4 - 7, top: 4 },
                 { key: 'sw' as ResizeHandle, left: 4, top: height - 4 - 7 },
