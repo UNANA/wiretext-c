@@ -18,6 +18,7 @@ interface LayersPanelProps {
 }
 
 function getObjectTitle(obj: CanvasObject): string {
+  if (obj.type === 'line' && obj.isConnector) return obj.annotation || obj.label || 'connector';
   if (obj.type === 'component') return obj.annotation || obj.label || obj.componentType || 'component';
   if (obj.type === 'text') return obj.content?.split('\n')[0] || 'text';
   return obj.annotation || obj.label || obj.type;
@@ -26,6 +27,7 @@ function getObjectTitle(obj: CanvasObject): string {
 function getObjectIcon(obj: CanvasObject): string {
   if (obj.type === 'text') return 'T';
   if (obj.type === 'component') return '▪';
+  if (obj.type === 'line' && obj.isConnector) return '⇄';
   if (obj.type === 'line') return '╱';
   if (obj.type === 'arrow') return '→';
   if (obj.type === 'pencil') return '█';
@@ -164,9 +166,8 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                 setDropTargetLayerId(null);
               }}
               onClick={() => onMoveSelectionToLayer(layer.id)}
-              className={`flex w-full items-center gap-1.5 px-3 py-1 text-left text-xs transition-colors ${
-                activeLayerId === layer.id ? 'bg-accent/20 text-text' : 'text-text-dim hover:bg-surface'
-              } ${dropTargetLayerId === layer.id ? 'ring-1 ring-accent' : ''}`}
+              className={`flex w-full items-center gap-1.5 px-3 py-1 text-left text-xs transition-colors ${activeLayerId === layer.id ? 'bg-accent/20 text-text' : 'text-text-dim hover:bg-surface'
+                } ${dropTargetLayerId === layer.id ? 'ring-1 ring-accent' : ''}`}
             >
               {(draggingLayerId || draggingObjectId) && (
                 <span className="text-[10px] opacity-70">
@@ -232,9 +233,8 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                     setDropTargetLayerId(null);
                   }}
                   onClick={() => onSelectObject(obj.id)}
-                  className={`flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs ${
-                    selectedIds.has(obj.id) ? 'bg-accent/30 text-text' : 'text-text-dim hover:bg-surface'
-                  } ${dropTargetObjectId === obj.id ? 'ring-1 ring-accent' : ''}`}
+                  className={`flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs ${selectedIds.has(obj.id) ? 'bg-accent/30 text-text' : 'text-text-dim hover:bg-surface'
+                    } ${dropTargetObjectId === obj.id ? 'ring-1 ring-accent' : ''}`}
                   title={getObjectTitle(obj)}
                 >
                   <span className="text-[10px] opacity-70">⋮⋮</span>

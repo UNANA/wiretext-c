@@ -135,7 +135,7 @@ const SingleObjectProperties: React.FC<SingleObjectPropertiesProps> = ({
       <div className="flex justify-between items-center">
         <span className="text-text-dim">Type</span>
         <span className="text-text capitalize">
-          {obj.componentType || obj.type}
+          {isConnector ? 'connector' : (obj.componentType || obj.type)}
         </span>
       </div>
 
