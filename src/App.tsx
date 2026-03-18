@@ -297,6 +297,7 @@ function App() {
             alignmentGuides={alignmentGuides}
             panViewport={panViewport}
             onCanvasContextMenu={(x, y, onSelection) => setContextMenu({ x, y, onSelection })}
+            showSelectionControls={!(showExportModal || showSettingsModal || showAboutModal)}
           />
           {contextMenu && (
             <div
@@ -417,4 +418,3 @@ function App() {
 }
 
 export default App;
-
