@@ -30,6 +30,7 @@ import type {
 
 export const TOOLS = {
   SELECT: 'select' as Tool,
+  PAN: 'pan' as Tool,
   BOX: 'box' as Tool,
   TEXT: 'text' as Tool,
   LINE: 'line' as Tool,
@@ -1410,6 +1411,10 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
   ) => {
     setCursor({ col, row });
     setAlignmentGuides([]);
+
+    if (tool === TOOLS.PAN) {
+      return;
+    }
 
     if (groupHandle && selectedIds.size >= 2) {
       const selectedResizable = objects

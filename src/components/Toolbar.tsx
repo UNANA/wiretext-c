@@ -14,7 +14,8 @@ interface ToolbarProps {
 }
 
 const DRAW_TOOLS: { id: Tool; label: string; shortcut?: string; icon: string; bigIcon?: boolean }[] = [
-  { id: 'select', label: 'Select', shortcut: 'V', icon: '↖', bigIcon:true },
+  { id: 'select', label: 'Select', shortcut: 'V', icon: '↖', bigIcon: true },
+  { id: 'pan', label: 'Pan', shortcut: 'H', icon: '✌︎', bigIcon: true },
   { id: 'box', label: 'Box', shortcut: 'B', icon: '┌─┐', bigIcon:false },
   { id: 'text', label: 'Text', shortcut: 'T', icon: 'Aa', bigIcon:false },
   { id: 'line', label: 'Line', shortcut: 'L', icon: '───', bigIcon:false },
@@ -65,25 +66,32 @@ const Toolbar: React.FC<ToolbarProps> = ({
 
         {/* Tool icons */}
         <div className="flex-1 overflow-y-auto">
-          {/* Select */}
-          <div className="p-1">
-            <button
-              className={`flex w-full items-center justify-center rounded p-1.5 text-xs transition-colors ${isToolActive('select') && !pendingComponent
-                ? 'bg-accent text-bg'
-                : 'text-text-dim hover:bg-surface-hover hover:text-text'
-                }`}
-              onClick={() => { setTool('select'); setPendingComponent(null); }}
-              title="Select (V)"
-            >
-              <span className="font-mono text-2xs">↖</span>
-            </button>
+          {/* Select + Pan */}
+          <div className="p-1 flex flex-col gap-0.5">
+            {DRAW_TOOLS.slice(0, 2).map((t) => (
+              <button
+                key={t.id}
+                className={`flex w-full items-center justify-center rounded p-1.5 text-xs transition-colors ${isToolActive(t.id) && !pendingComponent
+                  ? 'bg-accent text-bg'
+                  : 'text-text-dim hover:bg-surface-hover hover:text-text'
+                  }`}
+                onClick={() => { setTool(t.id); setPendingComponent(null); }}
+                title={`${t.label} (${t.shortcut})`}
+              >
+                {t.bigIcon ? (
+                  <span className="font-mono text-text text-base">{t.icon}</span>
+                ) : (
+                  <span className="font-mono text-2xs">{t.icon.slice(0, 2)}</span>
+                )}
+              </button>
+            ))}
           </div>
 
           <div className="mx-1 h-px bg-border" />
 
           {/* Draw tools */}
           <div className="p-1 flex flex-col gap-0.5">
-            {DRAW_TOOLS.slice(1).map((t) => (
+            {DRAW_TOOLS.slice(2).map((t) => (
               <button
                 key={t.id}
                 className={`flex items-center justify-center rounded p-1.5 text-xs transition-colors ${isToolActive(t.id) && !pendingComponent
@@ -159,19 +167,24 @@ const Toolbar: React.FC<ToolbarProps> = ({
 
       {/* Tools List */}
       <div className="flex-1 overflow-y-auto">
-        {/* Select Tool */}
-        <div className="p-2">
-          <button
-            className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors ${isToolActive('select') && !pendingComponent
-              ? 'bg-accent text-bg'
-              : 'text-text-dim hover:bg-surface-hover hover:text-text'
-              }`}
-            onClick={() => { setTool('select'); setPendingComponent(null); }}
-          >
-            <span className="w-10 shrink-0 font-mono text-2xs">↖</span>
-            <span className="flex-1">Select</span>
-            <span className="font-mono text-2xs opacity-40">V</span>
-          </button>
+        {/* Select + Pan */}
+        <div className="p-2 flex flex-col gap-0.5">
+          {DRAW_TOOLS.slice(0, 2).map((t) => (
+            <button
+              key={t.id}
+              className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors ${isToolActive(t.id) && !pendingComponent
+                ? 'bg-accent text-bg'
+                : 'text-text-dim hover:bg-surface-hover hover:text-text'
+                }`}
+              onClick={() => { setTool(t.id); setPendingComponent(null); }}
+            >
+              <span className="w-10 shrink-0 font-mono text-2xs">{t.icon}</span>
+              <span className="flex-1">{t.label}</span>
+              {t.shortcut && (
+                <span className="font-mono text-2xs opacity-40">{t.shortcut}</span>
+              )}
+            </button>
+          ))}
         </div>
 
         <div className="mx-2 h-px bg-border" />
@@ -180,7 +193,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
         <div className="p-2">
           <div className="text-2xs text-text-dim uppercase tracking-wider mb-2">Draw</div>
           <div className="flex flex-col gap-0.5">
-            {DRAW_TOOLS.slice(1).map((t) => (
+            {DRAW_TOOLS.slice(2).map((t) => (
               <button
                 key={t.id}
                 className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors ${isToolActive(t.id) && !pendingComponent

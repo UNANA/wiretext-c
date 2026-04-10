@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useIsMobile } from './hooks/useIsMobile';
 import { useCanvas, TOOLS } from './hooks/useCanvas';
 import { useKeyboard } from './hooks/useKeyboard';
 import { useShareUrl, encodeObjects } from './hooks/useShareUrl';
@@ -26,6 +27,7 @@ type ContextMenuItem = {
 
 function App() {
   const [inspectorTab, setInspectorTab] = useState<'layers' | 'properties'>('properties');
+  const isMobile = useIsMobile();
 
   const {
     visibleComponents,
@@ -119,6 +121,7 @@ function App() {
     { key: 'b', handler: () => setTool(TOOLS.BOX) },
     { key: 't', handler: () => setTool(TOOLS.TEXT) },
     { key: 'v', handler: () => setTool(TOOLS.SELECT) },
+    { key: 'h', handler: () => setTool(TOOLS.PAN) },
     { key: 'l', handler: () => setTool(TOOLS.LINE) },
     { key: 'a', handler: () => setTool(TOOLS.ARROW) },
     { key: 'c', handler: () => setTool(TOOLS.CONNECTOR) },
@@ -236,6 +239,18 @@ function App() {
   const menuHeight = (activeMenuItems.length * 32) + 8;
   const menuLeft = contextMenu ? Math.min(contextMenu.x, window.innerWidth - menuWidth - 8) : 0;
   const menuTop = contextMenu ? Math.min(contextMenu.y, window.innerHeight - menuHeight - 8) : 0;
+
+  if (isMobile) {
+    return (
+      <div className={`theme-${theme} flex h-screen w-screen flex-col items-center justify-center bg-bg px-6 text-center font-mono antialiased`}>
+        <p className="mb-2 text-xs uppercase tracking-wide text-text-dim">Wiretext</p>
+        <h2 className="mb-3 text-base font-normal text-text">Desktop only</h2>
+        <p className="max-w-sm text-xs leading-relaxed text-text-dim">
+          This app is supported on desktop browsers only. Open Wiretext on a computer for the full experience.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className={`theme-${theme} flex h-screen w-screen flex-col bg-bg font-mono antialiased`}>

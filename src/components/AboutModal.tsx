@@ -6,6 +6,7 @@ interface AboutModalProps {
 
 const SHORTCUTS = [
   { keys: 'V', action: 'Select' },
+  { keys: 'H', action: 'Pan (drag to move view)' },
   { keys: 'B', action: 'Box' },
   { keys: 'T', action: 'Text' },
   { keys: 'L', action: 'Line' },
@@ -93,7 +94,7 @@ const AboutModal: React.FC<AboutModalProps> = ({ onClose }) => {
         </div>
 
         <div className="flex items-center justify-between border-t border-border px-3 py-2 text-2xs text-text-dim">
-          <span>v1.0.3</span>
+          <span>v1.0.4</span>
           <span aria-hidden>└────────┘</span>
         </div>
       </div>

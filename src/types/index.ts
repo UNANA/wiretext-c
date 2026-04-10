@@ -2,6 +2,7 @@ export type BoxStyle = 'single' | 'double' | 'rounded' | 'heavy';
 
 export type Tool =
   | 'select'
+  | 'pan'
   | 'box'
   | 'text'
   | 'line'

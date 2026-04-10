@@ -36,6 +36,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 }) => {
   const toolLabels: Record<Tool, string> = {
     select: 'Select',
+    pan: 'Pan',
     box: 'Box',
     text: 'Text',
     line: 'Line',

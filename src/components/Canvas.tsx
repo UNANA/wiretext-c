@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
+import React, { useMemo, useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react';
 import type {
   Grid,
   Position,
@@ -93,20 +93,44 @@ const HANDLE_SIZE = 7;
 const GROUP_HANDLE_SIZE = HANDLE_SIZE + 3;
 const INTERSECTION_HANDLE_SIZE = HANDLE_SIZE + 4;
 
-// Hook to measure character dimensions
+// Hook to measure character dimensions (already at current zoom via fontSize 14 * zoom)
 function useCharMetrics(zoom: number) {
   const [metrics, setMetrics] = useState({ charWidth: 10, lineHeight: 20 });
   const measureRef = useRef<HTMLSpanElement>(null);
 
+  const measure = useCallback(() => {
+    const el = measureRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setMetrics({
+      charWidth: rect.width,
+      lineHeight: rect.height,
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    measure();
+  }, [zoom, measure]);
+
   useEffect(() => {
-    if (measureRef.current) {
-      const rect = measureRef.current.getBoundingClientRect();
-      setMetrics({
-        charWidth: rect.width,
-        lineHeight: rect.height
-      });
-    }
-  }, [zoom]);
+    const el = measureRef.current;
+    if (!el) return;
+
+    let cancelled = false;
+    const run = () => {
+      if (!cancelled) measure();
+    };
+
+    void document.fonts?.ready?.then(run).catch(run);
+
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(run) : null;
+    ro?.observe(el);
+
+    return () => {
+      cancelled = true;
+      ro?.disconnect();
+    };
+  }, [zoom, measure]);
 
   return { metrics, measureRef };
 }
@@ -147,18 +171,18 @@ const Canvas: React.FC<CanvasProps> = ({
   const screenToGrid = useCallback((screenX: number, screenY: number): Position => {
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return { col: 0, row: 0 };
-    const x = (screenX - rect.left - panX) / zoom;
-    const y = (screenY - rect.top - panY) / zoom;
+    const x = screenX - rect.left - panX;
+    const y = screenY - rect.top - panY;
     const col = Math.floor(x / charWidth);
     const row = Math.floor(y / lineHeight);
     return {
       col: Math.min(gridSize.cols - 1, Math.max(0, col)),
       row: Math.min(gridSize.rows - 1, Math.max(0, row)),
     };
-  }, [panX, panY, zoom, charWidth, lineHeight, gridSize.cols, gridSize.rows]);
+  }, [panX, panY, charWidth, lineHeight, gridSize.cols, gridSize.rows]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.button === 1 || (e.button === 0 && e.shiftKey)) {
+    if (e.button === 1 || (e.button === 0 && e.shiftKey) || (e.button === 0 && tool === 'pan')) {
       setIsPanning(true);
       lastPanPos.current = { x: e.clientX, y: e.clientY };
       e.preventDefault();
@@ -170,10 +194,11 @@ const Canvas: React.FC<CanvasProps> = ({
       setIsDragging(true);
       handleCellMouseDown(pos.col, pos.row, null);
     }
-  }, [screenToGrid, handleCellMouseDown]);
+  }, [screenToGrid, handleCellMouseDown, tool]);
 
   // Double-click to edit text
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    if (tool === 'pan') return;
     const pos = screenToGrid(e.clientX, e.clientY);
     // Find text object at position
     const hitObject = objects.find(obj =>
@@ -186,7 +211,7 @@ const Canvas: React.FC<CanvasProps> = ({
     if (hitObject && setEditingObjectId) {
       setEditingObjectId(hitObject.id);
     }
-  }, [screenToGrid, objects, setEditingObjectId]);
+  }, [tool, screenToGrid, objects, setEditingObjectId]);
 
   const handleMouseMove = useCallback((e: { clientX: number; clientY: number }) => {
     // Handle panning via middle-click or Shift+click drag
@@ -407,7 +432,7 @@ const Canvas: React.FC<CanvasProps> = ({
       }
 
       const merged: typeof verticalSegments = [];
-      grouped.forEach((bucket, line) => {
+      grouped.forEach((bucket) => {
         const sorted = [...bucket].sort((a, b) => a.start - b.start);
         let current = {
           ...sorted[0],
@@ -460,7 +485,7 @@ const Canvas: React.FC<CanvasProps> = ({
       }
 
       const merged: typeof horizontalSegments = [];
-      grouped.forEach((bucket, line) => {
+      grouped.forEach((bucket) => {
         const sorted = [...bucket].sort((a, b) => a.start - b.start);
         let current = {
           ...sorted[0],
@@ -638,6 +663,8 @@ const Canvas: React.FC<CanvasProps> = ({
     let centerMultiHandle: null | {
       col: number;
       row: number;
+      visualCol: number;
+      visualRow: number;
       verticalLine: number;
       horizontalLine: number;
       leftObjectIds: string[];
@@ -722,12 +749,12 @@ const Canvas: React.FC<CanvasProps> = ({
     const height = Math.abs(cursor.row - startRow) + 1;
 
     return {
-      left: col * charWidth * zoom + panX,
-      top: row * lineHeight * zoom + panY,
-      width: width * charWidth * zoom,
-      height: height * lineHeight * zoom,
+      left: col * charWidth + panX,
+      top: row * lineHeight + panY,
+      width: width * charWidth,
+      height: height * lineHeight,
     };
-  }, [isDrawing, drawingTool, dragState, cursor, charWidth, lineHeight, zoom, panX, panY]);
+  }, [isDrawing, drawingTool, dragState, cursor, charWidth, lineHeight, panX, panY]);
 
   const routeConnectorPreviewPath = useCallback((start: Position, end: Position): Position[] => {
     if (start.col === end.col && start.row === end.row) return [start, end];
@@ -826,8 +853,8 @@ const Canvas: React.FC<CanvasProps> = ({
     if (!isDrawing || (drawingTool !== 'line' && drawingTool !== 'arrow' && drawingTool !== 'connector')) return null;
     const { startCol, startRow } = dragState as { startCol: number; startRow: number };
     const toScreen = (col: number, row: number) => ({
-      x: col * charWidth * zoom + panX + charWidth * zoom / 2,
-      y: row * lineHeight * zoom + panY + lineHeight * zoom / 2,
+      x: col * charWidth + panX + charWidth / 2,
+      y: row * lineHeight + panY + lineHeight / 2,
     });
 
     const createSegment = (fromX: number, fromY: number, toX: number, toY: number) => {
@@ -871,7 +898,7 @@ const Canvas: React.FC<CanvasProps> = ({
       endX,
       endY,
     };
-  }, [isDrawing, drawingTool, dragState, cursor, charWidth, lineHeight, zoom, panX, panY, routeConnectorPreviewPath]);
+  }, [isDrawing, drawingTool, dragState, cursor, charWidth, lineHeight, panX, panY, routeConnectorPreviewPath]);
 
   // Handle resize handle mouse down
   const handleResizeHandleDown = useCallback((e: React.MouseEvent, obj: CanvasObject, handle: ResizeHandle) => {
@@ -1026,10 +1053,10 @@ const Canvas: React.FC<CanvasProps> = ({
         style={{
           left: panX,
           top: panY,
-          width: gridWidth * zoom,
-          height: gridHeight * zoom,
+          width: gridWidth,
+          height: gridHeight,
           backgroundImage: 'radial-gradient(circle, rgb(var(--color-grid-dot, 19 19 32)) 1px, transparent 1px)',
-          backgroundSize: `${charWidth * zoom}px ${lineHeight * zoom}px`,
+          backgroundSize: `${charWidth}px ${lineHeight}px`,
         }}
       />
 
@@ -1067,8 +1094,8 @@ const Canvas: React.FC<CanvasProps> = ({
           key={anchor.key}
           className="absolute pointer-events-none"
           style={{
-            left: anchor.col * charWidth * zoom + panX + (charWidth * zoom) / 2 - HANDLE_SIZE / 2,
-            top: anchor.row * lineHeight * zoom + panY + (lineHeight * zoom) / 2 - HANDLE_SIZE / 2,
+            left: anchor.col * charWidth + panX + (charWidth) / 2 - HANDLE_SIZE / 2,
+            top: anchor.row * lineHeight + panY + (lineHeight) / 2 - HANDLE_SIZE / 2,
             width: HANDLE_SIZE,
             height: HANDLE_SIZE,
             borderRadius: '50%',
@@ -1080,16 +1107,16 @@ const Canvas: React.FC<CanvasProps> = ({
         />
       ))}
 
-      {/* Selection overlays - different styles per object type */}
-      {showSelectionControls && groupResizeModel && (
+      {/* Selection overlays - different styles per object type (hidden during Pan so drags hit the pan layer) */}
+      {showSelectionControls && tool !== 'pan' && groupResizeModel && (
         <>
           <div
             className="absolute rounded-sm pointer-events-none"
             style={{
-              left: groupResizeModel.bounds.minCol * charWidth * zoom + panX,
-              top: groupResizeModel.bounds.minRow * lineHeight * zoom + panY,
-              width: (groupResizeModel.bounds.maxCol - groupResizeModel.bounds.minCol + 1) * charWidth * zoom,
-              height: (groupResizeModel.bounds.maxRow - groupResizeModel.bounds.minRow + 1) * lineHeight * zoom,
+              left: groupResizeModel.bounds.minCol * charWidth + panX,
+              top: groupResizeModel.bounds.minRow * lineHeight + panY,
+              width: (groupResizeModel.bounds.maxCol - groupResizeModel.bounds.minCol + 1) * charWidth,
+              height: (groupResizeModel.bounds.maxRow - groupResizeModel.bounds.minRow + 1) * lineHeight,
               border: '1px solid rgb(var(--color-selection-border, 108 138 255) / 0.65)',
               boxShadow: '0 0 0 1px rgb(var(--color-selection, 108 138 255) / 0.12) inset',
             }}
@@ -1112,9 +1139,9 @@ const Canvas: React.FC<CanvasProps> = ({
               .map(obj => obj.id);
             const leftIds = segment.leftObjectIds ?? computedLeftIds;
             const rightIds = segment.rightObjectIds ?? computedRightIds;
-            const splitX = segment.visualLine * charWidth * zoom + panX;
-            const top = segment.start * lineHeight * zoom + panY;
-            const height = (segment.end - segment.start + 1) * lineHeight * zoom;
+            const splitX = segment.visualLine * charWidth + panX;
+            const top = segment.start * lineHeight + panY;
+            const height = (segment.end - segment.start + 1) * lineHeight;
             const segmentMidY = top + height / 2;
             const midRow = Math.round((segment.start + segment.end) / 2);
             return (
@@ -1172,9 +1199,9 @@ const Canvas: React.FC<CanvasProps> = ({
               .map(obj => obj.id);
             const topIds = segment.topObjectIds ?? computedTopIds;
             const bottomIds = segment.bottomObjectIds ?? computedBottomIds;
-            const left = segment.start * charWidth * zoom + panX;
-            const width = (segment.end - segment.start + 1) * charWidth * zoom;
-            const splitY = segment.visualLine * lineHeight * zoom + panY;
+            const left = segment.start * charWidth + panX;
+            const width = (segment.end - segment.start + 1) * charWidth;
+            const splitY = segment.visualLine * lineHeight + panY;
             const segmentMidX = left + width / 2;
             const midCol = Math.round((segment.start + segment.end) / 2);
             return (
@@ -1220,8 +1247,8 @@ const Canvas: React.FC<CanvasProps> = ({
               key={`x-${point.verticalLine}-${point.horizontalLine}-${idx}`}
               className="absolute pointer-events-auto hover:bg-white"
               style={{
-                left: point.visualCol * charWidth * zoom + panX - INTERSECTION_HANDLE_SIZE / 2,
-                top: point.visualRow * lineHeight * zoom + panY - INTERSECTION_HANDLE_SIZE / 2,
+                left: point.visualCol * charWidth + panX - INTERSECTION_HANDLE_SIZE / 2,
+                top: point.visualRow * lineHeight + panY - INTERSECTION_HANDLE_SIZE / 2,
                 width: INTERSECTION_HANDLE_SIZE,
                 height: INTERSECTION_HANDLE_SIZE,
                 background: 'rgb(var(--color-accent, 108 138 255))',
@@ -1250,8 +1277,8 @@ const Canvas: React.FC<CanvasProps> = ({
               <div
                 className="absolute pointer-events-auto hover:bg-white"
                 style={{
-                  left: centerHandle.visualCol * charWidth * zoom + panX - GROUP_HANDLE_SIZE / 2,
-                  top: centerHandle.visualRow * lineHeight * zoom + panY - GROUP_HANDLE_SIZE / 2,
+                  left: centerHandle.visualCol * charWidth + panX - GROUP_HANDLE_SIZE / 2,
+                  top: centerHandle.visualRow * lineHeight + panY - GROUP_HANDLE_SIZE / 2,
                   width: GROUP_HANDLE_SIZE,
                   height: GROUP_HANDLE_SIZE,
                   background: 'rgb(var(--color-accent, 108 138 255))',
@@ -1283,11 +1310,11 @@ const Canvas: React.FC<CanvasProps> = ({
         </>
       )}
 
-      {showSelectionControls && selectedObjects.map(obj => {
-        const left = obj.position.col * charWidth * zoom + panX;
-        const top = obj.position.row * lineHeight * zoom + panY;
-        const width = obj.width * charWidth * zoom;
-        const height = obj.height * lineHeight * zoom;
+      {showSelectionControls && tool !== 'pan' && selectedObjects.map(obj => {
+        const left = obj.position.col * charWidth + panX;
+        const top = obj.position.row * lineHeight + panY;
+        const width = obj.width * charWidth;
+        const height = obj.height * lineHeight;
 
         // Box/Component: Full box with 8 resize handles
         if (obj.type === 'box' || obj.type === 'component') {
@@ -1338,10 +1365,10 @@ const Canvas: React.FC<CanvasProps> = ({
         // Line/Arrow: Visual line preview + handles
         if (obj.type === 'line' || obj.type === 'arrow') {
           const bbox = getLineBoundingBox(obj);
-          const boxLeft = bbox.col * charWidth * zoom + panX;
-          const boxTop = bbox.row * lineHeight * zoom + panY;
-          const boxWidth = bbox.width * charWidth * zoom;
-          const boxHeight = bbox.height * lineHeight * zoom;
+          const boxLeft = bbox.col * charWidth + panX;
+          const boxTop = bbox.row * lineHeight + panY;
+          const boxWidth = bbox.width * charWidth;
+          const boxHeight = bbox.height * lineHeight;
 
           // Calculate end position
           let endCol = obj.endPosition?.col;
@@ -1353,10 +1380,10 @@ const Canvas: React.FC<CanvasProps> = ({
             endRow = obj.position.row + Math.round(Math.sin(rad) * length);
           }
 
-          const startX = obj.position.col * charWidth * zoom + panX + charWidth * zoom / 2;
-          const startY = obj.position.row * lineHeight * zoom + panY + lineHeight * zoom / 2;
-          const endX = (endCol ?? obj.position.col) * charWidth * zoom + panX + charWidth * zoom / 2;
-          const endY = (endRow ?? obj.position.row) * lineHeight * zoom + panY + lineHeight * zoom / 2;
+          const startX = obj.position.col * charWidth + panX + charWidth / 2;
+          const startY = obj.position.row * lineHeight + panY + lineHeight / 2;
+          const endX = (endCol ?? obj.position.col) * charWidth + panX + charWidth / 2;
+          const endY = (endRow ?? obj.position.row) * lineHeight + panY + lineHeight / 2;
 
           const dx = endX - startX;
           const dy = endY - startY;
@@ -1365,10 +1392,10 @@ const Canvas: React.FC<CanvasProps> = ({
           const connectorSegments = (obj.isConnector && obj.connectorPath && obj.connectorPath.length >= 2)
             ? obj.connectorPath.slice(0, -1).map((point, idx) => {
               const next = obj.connectorPath![idx + 1];
-              const x1 = point.col * charWidth * zoom + panX + charWidth * zoom / 2;
-              const y1 = point.row * lineHeight * zoom + panY + lineHeight * zoom / 2;
-              const x2 = next.col * charWidth * zoom + panX + charWidth * zoom / 2;
-              const y2 = next.row * lineHeight * zoom + panY + lineHeight * zoom / 2;
+              const x1 = point.col * charWidth + panX + charWidth / 2;
+              const y1 = point.row * lineHeight + panY + lineHeight / 2;
+              const x2 = next.col * charWidth + panX + charWidth / 2;
+              const y2 = next.row * lineHeight + panY + lineHeight / 2;
               const segDx = x2 - x1;
               const segDy = y2 - y1;
               return {
@@ -1380,10 +1407,10 @@ const Canvas: React.FC<CanvasProps> = ({
             }).filter(seg => seg.width > 0)
             : [];
 
-          const startLeft = obj.position.col * charWidth * zoom + panX - 3.5;
-          const startTop = obj.position.row * lineHeight * zoom + panY - 3.5;
-          const endLeft = (endCol ?? obj.position.col) * charWidth * zoom + panX - 3.5;
-          const endTop = (endRow ?? obj.position.row) * lineHeight * zoom + panY - 3.5;
+          const startLeft = obj.position.col * charWidth + panX - 3.5;
+          const startTop = obj.position.row * lineHeight + panY - 3.5;
+          const endLeft = (endCol ?? obj.position.col) * charWidth + panX - 3.5;
+          const endTop = (endRow ?? obj.position.row) * lineHeight + panY - 3.5;
 
           return (
             <div key={obj.id}>
@@ -1608,9 +1635,9 @@ const Canvas: React.FC<CanvasProps> = ({
       {editingObjectId && (() => {
         const editingObj = objects.find(obj => obj.id === editingObjectId);
         if (!editingObj || editingObj.type !== 'text') return null;
-        const textLeft = editingObj.position.col * charWidth * zoom + panX;
-        const textTop = editingObj.position.row * lineHeight * zoom + panY;
-        const textWidth = Math.max(editingObj.width * charWidth * zoom, 100);
+        const textLeft = editingObj.position.col * charWidth + panX;
+        const textTop = editingObj.position.row * lineHeight + panY;
+        const textWidth = Math.max(editingObj.width * charWidth, 100);
 
         return (
           <TextEditPopup
@@ -1620,7 +1647,6 @@ const Canvas: React.FC<CanvasProps> = ({
             textLeft={textLeft}
             textTop={textTop}
             textWidth={textWidth}
-            zoom={zoom}
           />
         );
       })()}
@@ -1631,10 +1657,10 @@ const Canvas: React.FC<CanvasProps> = ({
         const maxCol = Math.max(marquee.startCol, marquee.endCol);
         const minRow = Math.min(marquee.startRow, marquee.endRow);
         const maxRow = Math.max(marquee.startRow, marquee.endRow);
-        const mLeft = minCol * charWidth * zoom + panX;
-        const mTop = minRow * lineHeight * zoom + panY;
-        const mWidth = (maxCol - minCol + 1) * charWidth * zoom;
-        const mHeight = (maxRow - minRow + 1) * lineHeight * zoom;
+        const mLeft = minCol * charWidth + panX;
+        const mTop = minRow * lineHeight + panY;
+        const mWidth = (maxCol - minCol + 1) * charWidth;
+        const mHeight = (maxRow - minRow + 1) * lineHeight;
         return (
           <div
             className="absolute pointer-events-none"
@@ -1659,10 +1685,10 @@ const Canvas: React.FC<CanvasProps> = ({
               key={`guide-v-${idx}`}
               className="absolute pointer-events-none"
               style={{
-                left: guide.at * charWidth * zoom + panX + (charWidth * zoom) / 2,
+                left: guide.at * charWidth + panX + (charWidth) / 2,
                 top: panY,
                 width: 1,
-                height: gridHeight * zoom,
+                height: gridHeight,
                 background: 'rgb(var(--color-accent, 108 138 255))',
                 opacity: 0.9,
                 zIndex: 25,
@@ -1676,8 +1702,8 @@ const Canvas: React.FC<CanvasProps> = ({
             className="absolute pointer-events-none"
             style={{
               left: panX,
-              top: guide.at * lineHeight * zoom + panY + (lineHeight * zoom) / 2,
-              width: gridWidth * zoom,
+              top: guide.at * lineHeight + panY + (lineHeight) / 2,
+              width: gridWidth,
               height: 1,
               background: 'rgb(var(--color-accent, 108 138 255))',
               opacity: 0.9,
@@ -1694,7 +1720,15 @@ const Canvas: React.FC<CanvasProps> = ({
           onMouseDown={handleMouseDown}
           onDoubleClick={handleDoubleClick}
           onMouseMove={handleMouseMove}
-          style={{ cursor: isPanning ? 'grabbing' : isDragging ? 'crosshair' : 'crosshair' }}
+          style={{
+            cursor: isPanning
+              ? 'grabbing'
+              : tool === 'pan'
+                ? 'grab'
+                : isDragging
+                  ? 'crosshair'
+                  : 'crosshair',
+          }}
         />
       )}
     </div>
@@ -1709,7 +1743,6 @@ interface TextEditPopupProps {
   textLeft: number;
   textTop: number;
   textWidth: number;
-  zoom: number;
 }
 
 const TextEditPopup: React.FC<TextEditPopupProps> = ({
@@ -1719,10 +1752,8 @@ const TextEditPopup: React.FC<TextEditPopupProps> = ({
   textLeft,
   textTop,
   textWidth,
-  zoom,
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const initialValueRef = useRef(value);
   const initialRowsRef = useRef(Math.max(value.split('\n').length, 1));
 
   // Focus textarea on mount - single attempt

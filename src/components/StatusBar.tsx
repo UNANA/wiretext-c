@@ -21,6 +21,7 @@ const StatusBar: React.FC<StatusBarProps> = ({
 }) => {
   const toolLabels: Record<Tool, string> = {
     select: 'SELECT',
+    pan: 'PAN',
     box: 'BOX',
     text: 'TEXT',
     line: 'LINE',
