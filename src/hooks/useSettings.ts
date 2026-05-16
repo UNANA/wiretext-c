@@ -12,6 +12,7 @@ interface Settings {
     sidebarCollapsed: boolean;
     theme: Theme;
     smartGuidesEnabled: boolean;
+    zoomMode: 'scroll' | 'zoom';
 }
 
 const DEFAULT_VISIBLE: Set<ComponentType> = new Set([
@@ -43,6 +44,7 @@ function getDefaultSettings(): Settings {
         sidebarCollapsed: false,
         theme: 'dark',
         smartGuidesEnabled: true,
+        zoomMode: 'scroll',
     };
 }
 
@@ -60,6 +62,7 @@ function loadSettings(): Settings {
                 sidebarCollapsed: parsed.sidebarCollapsed ?? false,
                 theme: parsed.theme === 'light' ? 'light' : 'dark',
                 smartGuidesEnabled: parsed.smartGuidesEnabled ?? true,
+                zoomMode: parsed.zoomMode === 'zoom' ? 'zoom' : 'scroll',
             };
         }
     } catch {
@@ -135,11 +138,19 @@ export function useSettings() {
         }));
     }, []);
 
+    const setZoomMode = useCallback((zoomMode: 'scroll' | 'zoom') => {
+        setSettings((prev) => ({
+            ...prev,
+            zoomMode,
+        }));
+    }, []);
+
     return {
         visibleComponents: settings.visibleComponents,
         sidebarCollapsed: settings.sidebarCollapsed,
         theme: settings.theme,
         smartGuidesEnabled: settings.smartGuidesEnabled,
+        zoomMode: settings.zoomMode,
         toggleComponent,
         showAll,
         hideAll,
@@ -147,5 +158,6 @@ export function useSettings() {
         toggleSidebar,
         setTheme,
         setSmartGuidesEnabled,
+        setZoomMode,
     };
 }

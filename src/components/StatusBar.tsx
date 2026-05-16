@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import type { Position, Tool, ComponentType } from '../types';
 import { COMPONENT_DEFS } from '../types';
 
@@ -6,6 +6,9 @@ interface StatusBarProps {
   cursor: Position;
   tool: Tool;
   zoom: number;
+  onZoomChange: (zoom: number) => void;
+  zoomMode: 'scroll' | 'zoom';
+  onZoomModeChange: (mode: 'scroll' | 'zoom') => void;
   objectsCount: number;
   selectedCount: number;
   pendingComponent: ComponentType | null;
@@ -15,10 +18,41 @@ const StatusBar: React.FC<StatusBarProps> = ({
   cursor,
   tool,
   zoom,
+  onZoomChange,
+  zoomMode,
+  onZoomModeChange,
   objectsCount,
   selectedCount,
   pendingComponent
 }) => {
+  const [isPopoverOpen, setIsPopoverOpen] = useState(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!isPopoverOpen) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        popoverRef.current && !popoverRef.current.contains(e.target as Node) &&
+        buttonRef.current && !buttonRef.current.contains(e.target as Node)
+      ) {
+        setIsPopoverOpen(false);
+      }
+    };
+
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsPopoverOpen(false);
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEsc);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEsc);
+    };
+  }, [isPopoverOpen]);
+
   const toolLabels: Record<Tool, string> = {
     select: 'SELECT',
     pan: 'PAN',
@@ -36,7 +70,7 @@ const StatusBar: React.FC<StatusBarProps> = ({
     : null;
 
   return (
-    <div className="flex h-7 shrink-0 items-center gap-4 border-t border-border bg-surface px-3 text-text-dim text-xs">
+    <div className="relative flex h-7 shrink-0 items-center gap-4 border-t border-border bg-surface px-3 text-text-dim text-xs">
       <a
         href="https://github.com/mualat/wiretext"
         target="_blank"
@@ -59,9 +93,104 @@ const StatusBar: React.FC<StatusBarProps> = ({
       <span className="text-accent font-medium">
         {toolLabels[tool]}
       </span>
-      <span>
-        {Math.round(zoom * 100)}%
-      </span>
+
+      <div className="relative flex items-center">
+        <button
+          ref={buttonRef}
+          onClick={() => setIsPopoverOpen(!isPopoverOpen)}
+          className={`flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors hover:bg-surface-hover ${
+            isPopoverOpen ? 'bg-surface-hover text-text' : ''
+          }`}
+        >
+          <span>{Math.round(zoom * 100)}%</span>
+          <svg className={`w-3 h-3 transition-transform ${isPopoverOpen ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+          </svg>
+        </button>
+
+        {isPopoverOpen && (
+          <div
+            ref={popoverRef}
+            className="absolute bottom-full left-0 mb-2 w-48 rounded-lg border border-border bg-surface p-3 shadow-2xl animate-fade-in z-50"
+          >
+            <div className="space-y-4">
+              {/* Zoom Slider */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] uppercase tracking-wider font-bold text-text-dim">Zoom</span>
+                  <span className="font-mono text-text">{Math.round(zoom * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.25"
+                  max="4"
+                  step="0.05"
+                  value={zoom}
+                  onChange={(e) => onZoomChange(parseFloat(e.target.value))}
+                  className="w-full h-1.5 bg-border rounded-lg appearance-none cursor-pointer accent-accent"
+                />
+                <div className="flex justify-between mt-1 text-[10px] text-text-dim font-mono">
+                  <span>25%</span>
+                  <span>400%</span>
+                </div>
+              </div>
+
+              <div className="h-px bg-border" />
+
+              {/* Zoom Mode Toggle */}
+              <div>
+                <span className="block text-[10px] uppercase tracking-wider font-bold text-text-dim mb-2">Wheel Behavior</span>
+                <div className="flex p-0.5 bg-bg rounded-md border border-border">
+                  <button
+                    onClick={() => onZoomModeChange('scroll')}
+                    className={`flex-1 py-1 text-[10px] rounded transition-all ${
+                      zoomMode === 'scroll'
+                        ? 'bg-surface text-text shadow-sm'
+                        : 'text-text-dim hover:text-text'
+                    }`}
+                  >
+                    Scroll
+                  </button>
+                  <button
+                    onClick={() => onZoomModeChange('zoom')}
+                    className={`flex-1 py-1 text-[10px] rounded transition-all ${
+                      zoomMode === 'zoom'
+                        ? 'bg-surface text-text shadow-sm'
+                        : 'text-text-dim hover:text-text'
+                    }`}
+                  >
+                    Zoom
+                  </button>
+                </div>
+              </div>
+
+              {/* Quick Actions */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => {
+                    onZoomChange(1);
+                    setIsPopoverOpen(false);
+                  }}
+                  className="py-1.5 px-2 text-[10px] rounded border border-border hover:bg-surface-hover text-text transition-colors"
+                >
+                  Reset (100%)
+                </button>
+                <button
+                  onClick={() => {
+                    // Logic for fit to screen could go here if implemented in useCanvas
+                    onZoomChange(1);
+                    setIsPopoverOpen(false);
+                  }}
+                  className="py-1.5 px-2 text-[10px] rounded border border-border hover:bg-surface-hover text-text transition-colors opacity-50 cursor-not-allowed"
+                >
+                  Fit Screen
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       <span>
         {objectsCount} {objectsCount === 1 ? 'object' : 'objects'}
       </span>

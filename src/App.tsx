@@ -41,6 +41,8 @@ function App() {
     toggleSidebar,
     setTheme,
     setSmartGuidesEnabled,
+    zoomMode,
+    setZoomMode,
   } = useSettings();
 
   const {
@@ -90,6 +92,8 @@ function App() {
     renameLayer,
     reorderLayer,
     arrangeSelectionLayer,
+    setZoom,
+    zoomViewport,
   } = useCanvas({ smartGuidesEnabled });
 
   const [showExportModal, setShowExportModal] = useState(false);
@@ -311,6 +315,8 @@ function App() {
             marquee={marquee}
             alignmentGuides={alignmentGuides}
             panViewport={panViewport}
+            zoomViewport={zoomViewport}
+            zoomMode={zoomMode}
             onCanvasContextMenu={(x, y, onSelection) => setContextMenu({ x, y, onSelection })}
             showSelectionControls={!(showExportModal || showSettingsModal || showAboutModal)}
           />
@@ -396,6 +402,9 @@ function App() {
         cursor={cursor}
         tool={tool}
         zoom={zoom}
+        onZoomChange={setZoom}
+        zoomMode={zoomMode}
+        onZoomModeChange={setZoomMode}
         objectsCount={objectsCount}
         selectedCount={selectedIds.size}
         pendingComponent={pendingComponent}

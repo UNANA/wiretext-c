@@ -85,6 +85,8 @@ interface CanvasProps {
   marquee?: MarqueeState | null;
   alignmentGuides?: AlignmentGuide[];
   panViewport?: (dx: number, dy: number) => void;
+  zoomViewport?: (delta: number, centerX: number, centerY: number) => void;
+  zoomMode?: 'scroll' | 'zoom';
   onCanvasContextMenu?: (x: number, y: number, onSelection: boolean) => void;
   showSelectionControls?: boolean;
 }
@@ -155,6 +157,8 @@ const Canvas: React.FC<CanvasProps> = ({
   marquee,
   alignmentGuides = [],
   panViewport,
+  zoomViewport,
+  zoomMode = 'scroll',
   onCanvasContextMenu,
   showSelectionControls = true,
 }) => {
@@ -262,8 +266,12 @@ const Canvas: React.FC<CanvasProps> = ({
 
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
-      // Shift+scroll = horizontal pan
-      if (e.shiftKey) {
+      // Zoom if meta/ctrl is held or if we're in zoom mode
+      if (e.ctrlKey || e.metaKey || zoomMode === 'zoom') {
+        const delta = -e.deltaY * 0.01;
+        zoomViewport?.(delta, e.clientX, e.clientY);
+      } else if (e.shiftKey) {
+        // Shift+scroll = horizontal pan
         panViewport?.(-e.deltaY, 0);
       } else {
         panViewport?.(-e.deltaX, -e.deltaY);
@@ -272,7 +280,7 @@ const Canvas: React.FC<CanvasProps> = ({
 
     el.addEventListener('wheel', handleWheel, { passive: false });
     return () => el.removeEventListener('wheel', handleWheel);
-  }, [panViewport]);
+  }, [panViewport, zoomViewport, zoomMode]);
 
   // Grid background size in pixels
   const gridWidth = gridSize.cols * charWidth;
