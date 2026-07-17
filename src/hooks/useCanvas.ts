@@ -116,7 +116,7 @@ export interface UseCanvasReturn {
   moveObjectToLayer: (objectId: string, layerId: string) => void;
   reorderObjectByDrop: (dragObjectId: string, targetObjectId: string) => void;
   renameLayer: (layerId: string, name: string) => void;
-  reorderLayer: (dragLayerId: string, targetLayerId: string) => void;
+  reorderLayer: (dragLayerId: string, targetLayerId: string, placement?: 'before' | 'inside' | 'after') => void;
   setLayerParent: (layerId: string, parentId?: string) => void;
   arrangeSelectionLayer: (mode: 'toFront' | 'forward' | 'backward' | 'toBack') => void;
   alignSelection: (mode: 'left' | 'centerHorizontal' | 'right' | 'top' | 'centerVertical' | 'bottom') => void;
@@ -1352,27 +1352,42 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     ))));
   }, [layers, pushHistory]);
 
-  const reorderLayer = useCallback((dragLayerId: string, targetLayerId: string) => {
+  const reorderLayer = useCallback((dragLayerId: string, targetLayerId: string, placement: 'before' | 'inside' | 'after' = 'before') => {
     if (dragLayerId === targetLayerId) return;
     const orderedLayers = [...layers].sort((a, b) => a.order - b.order);
+    const byId = new Map(orderedLayers.map(layer => [layer.id, layer]));
+    let ancestorId: string | undefined = placement === 'inside' ? targetLayerId : byId.get(targetLayerId)?.parentId;
+    while (ancestorId) {
+      if (ancestorId === dragLayerId) return;
+      ancestorId = byId.get(ancestorId)?.parentId;
+    }
     const fromIndex = orderedLayers.findIndex(layer => layer.id === dragLayerId);
-    const toIndex = orderedLayers.findIndex(layer => layer.id === targetLayerId);
-    if (fromIndex < 0 || toIndex < 0) return;
+    if (fromIndex < 0 || !byId.has(targetLayerId)) return;
 
     const reordered = [...orderedLayers];
     const [moved] = reordered.splice(fromIndex, 1);
-    reordered.splice(toIndex, 0, moved);
+    const targetIndex = reordered.findIndex(layer => layer.id === targetLayerId);
+    const insertAt = placement === 'before' ? targetIndex : targetIndex + 1;
+    reordered.splice(insertAt, 0, moved);
     const orderMap = new Map<string, number>(reordered.map((layer, order) => [layer.id, order]));
+    const parentId = placement === 'inside'
+      ? targetLayerId
+      : byId.get(targetLayerId)?.parentId;
+    if (dragLayerId === DEFAULT_LAYER_ID && parentId) return;
 
     setLayersState(prev => prev.map(layer => ({
       ...layer,
       order: orderMap.get(layer.id) ?? layer.order,
+      parentId: layer.id === dragLayerId ? parentId : layer.parentId,
     })));
 
     pushHistory();
     setObjects(prev => normalizeStackOrder(prev.map(obj => ({
       ...obj,
       layerOrder: orderMap.get(obj.layerId ?? DEFAULT_LAYER_ID) ?? (obj.layerOrder ?? 0),
+      layerParentId: (obj.layerId ?? DEFAULT_LAYER_ID) === dragLayerId
+        ? parentId
+        : obj.layerParentId,
     })), orderMap));
   }, [layers, pushHistory]);
 

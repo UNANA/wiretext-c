@@ -13,7 +13,7 @@ interface LayersPanelProps {
   onMoveObjectToLayer: (objectId: string, layerId: string) => void;
   onReorderObjectByDrop: (dragObjectId: string, targetObjectId: string) => void;
   onRenameLayer: (layerId: string, name: string) => void;
-  onReorderLayer: (dragLayerId: string, targetLayerId: string) => void;
+  onReorderLayer: (dragLayerId: string, targetLayerId: string, placement?: 'before' | 'inside' | 'after') => void;
   onSetLayerParent: (layerId: string, parentId?: string) => void;
   onCreateLayerFromSelection: () => void;
   onArrangeSelectionLayer: (mode: 'toFront' | 'forward' | 'backward' | 'toBack') => void;
@@ -57,6 +57,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
   const [draggingLayerId, setDraggingLayerId] = useState<string | null>(null);
   const [draggingObjectId, setDraggingObjectId] = useState<string | null>(null);
   const [dropTargetLayerId, setDropTargetLayerId] = useState<string | null>(null);
+  const [dropPlacement, setDropPlacement] = useState<'before' | 'inside' | 'after'>('inside');
   const [dropTargetObjectId, setDropTargetObjectId] = useState<string | null>(null);
   const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
   const [draftAnnotation, setDraftAnnotation] = useState('');
@@ -164,6 +165,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
               e.preventDefault();
               if ((draggingLayerId && draggingLayerId !== layer.id) || draggingObjectId) {
                 setDropTargetLayerId(layer.id);
+                setDropPlacement('inside');
               }
             }}
             onDrop={(e) => {
@@ -171,7 +173,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
               if (draggingObjectId) {
                 onMoveObjectToLayer(draggingObjectId, layer.id);
               } else if (draggingLayerId) {
-                onReorderLayer(draggingLayerId, layer.id);
+                onReorderLayer(draggingLayerId, layer.id, dropPlacement);
               }
               setDraggingLayerId(null);
               setDraggingObjectId(null);
@@ -184,16 +186,25 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
               onDragStart={() => setDraggingLayerId(layer.id)}
               onDragOver={(e) => {
                 e.preventDefault();
+                e.stopPropagation();
                 if ((draggingLayerId && draggingLayerId !== layer.id) || draggingObjectId) {
                   setDropTargetLayerId(layer.id);
+                  if (draggingLayerId) {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const position = (e.clientY - rect.top) / rect.height;
+                    setDropPlacement(position < 0.25 ? 'before' : position > 0.75 ? 'after' : 'inside');
+                  } else {
+                    setDropPlacement('inside');
+                  }
                 }
               }}
               onDrop={(e) => {
                 e.preventDefault();
+                e.stopPropagation();
                 if (draggingObjectId) {
                   onMoveObjectToLayer(draggingObjectId, layer.id);
                 } else if (draggingLayerId) {
-                  onReorderLayer(draggingLayerId, layer.id);
+                  onReorderLayer(draggingLayerId, layer.id, dropPlacement);
                 }
                 setDraggingLayerId(null);
                 setDraggingObjectId(null);
@@ -207,7 +218,9 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
               }}
               onClick={() => onMoveSelectionToLayer(layer.id)}
               className={`flex w-full items-center gap-1.5 px-3 py-1 text-left text-xs transition-colors ${activeLayerId === layer.id ? 'bg-accent/20 text-text' : 'text-text-dim hover:bg-surface'
-                } ${dropTargetLayerId === layer.id ? 'ring-1 ring-accent' : ''}`}
+                } ${dropTargetLayerId === layer.id && dropPlacement === 'inside' ? 'ring-1 ring-accent' : ''}
+                ${dropTargetLayerId === layer.id && dropPlacement === 'before' ? 'border-t border-accent' : ''}
+                ${dropTargetLayerId === layer.id && dropPlacement === 'after' ? 'border-b border-accent' : ''}`}
               style={{ paddingLeft: `${12 + layer.depth * 14}px` }}
             >
               {(draggingLayerId || draggingObjectId) && (
