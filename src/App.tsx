@@ -14,6 +14,8 @@ import ExportModal from './components/ExportModal';
 import SettingsModal from './components/SettingsModal';
 import AboutModal from './components/AboutModal';
 import { getDefaultProjectFilename, parseProjectFile, stringifyProjectFile } from './utils/projectFile';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 import type { KeyboardShortcut, ComponentType } from './types';
 import './App.css';
 
@@ -133,8 +135,25 @@ function App() {
     window.setTimeout(() => setFileToast(null), 2400);
   }, []);
 
-  const handleSaveProject = useCallback(() => {
-    const blob = new Blob([stringifyProjectFile(objects)], { type: 'application/json' });
+  const handleSaveProject = useCallback(async () => {
+    const projectContents = stringifyProjectFile(objects);
+
+    if ('__TAURI_INTERNALS__' in window) {
+      try {
+        const path = await save({
+          defaultPath: getDefaultProjectFilename(),
+          filters: [{ name: 'Wiretext project', extensions: ['wiretext'] }],
+        });
+        if (!path) return;
+        await writeTextFile(path, projectContents);
+        showFileToast('success', `Project saved to ${path}.`);
+      } catch {
+        showFileToast('error', 'Could not save the Wiretext project.');
+      }
+      return;
+    }
+
+    const blob = new Blob([projectContents], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
