@@ -117,6 +117,7 @@ export interface UseCanvasReturn {
   reorderObjectByDrop: (dragObjectId: string, targetObjectId: string) => void;
   renameLayer: (layerId: string, name: string) => void;
   reorderLayer: (dragLayerId: string, targetLayerId: string) => void;
+  setLayerParent: (layerId: string, parentId?: string) => void;
   arrangeSelectionLayer: (mode: 'toFront' | 'forward' | 'backward' | 'toBack') => void;
   alignSelection: (mode: 'left' | 'centerHorizontal' | 'right' | 'top' | 'centerVertical' | 'bottom') => void;
   distributeSelection: (axis: 'horizontal' | 'vertical') => void;
@@ -196,6 +197,7 @@ function buildLayers(list: CanvasObject[]): CanvasLayer[] {
       name: objectsInLayer[0]?.layerName || DEFAULT_LAYER_NAME,
       order: objectsInLayer[0]?.layerOrder ?? 0,
       objectCount: objectsInLayer.length,
+      parentId: objectsInLayer[0]?.layerParentId,
     }))
     .sort((a, b) => a.order - b.order);
 
@@ -607,6 +609,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
         name: fromState?.name ?? fromObjects?.name ?? `Layer ${idx + 1}`,
         order: fromState?.order ?? fromObjects?.order ?? idx,
         objectCount: fromObjects?.objectCount ?? 0,
+        parentId: fromObjects?.parentId ?? fromState?.parentId,
       };
     });
 
@@ -1371,6 +1374,30 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       ...obj,
       layerOrder: orderMap.get(obj.layerId ?? DEFAULT_LAYER_ID) ?? (obj.layerOrder ?? 0),
     })), orderMap));
+  }, [layers, pushHistory]);
+
+  const setLayerParent = useCallback((layerId: string, parentId?: string) => {
+    if (layerId === DEFAULT_LAYER_ID || layerId === parentId) return;
+    const byId = new Map(layers.map(layer => [layer.id, layer]));
+    if (!byId.has(layerId) || (parentId && !byId.has(parentId))) return;
+
+    let ancestorId = parentId;
+    while (ancestorId) {
+      if (ancestorId === layerId) return;
+      ancestorId = byId.get(ancestorId)?.parentId;
+    }
+
+    const current = byId.get(layerId);
+    if (current?.parentId === parentId) return;
+    setLayersState(prev => prev.map(layer => (
+      layer.id === layerId ? { ...layer, parentId } : layer
+    )));
+    pushHistory();
+    setObjects(prev => normalizeStackOrder(prev.map(obj => (
+      (obj.layerId ?? DEFAULT_LAYER_ID) === layerId
+        ? { ...obj, layerParentId: parentId }
+        : obj
+    ))));
   }, [layers, pushHistory]);
 
   const arrangeSelectionLayer = useCallback((mode: 'toFront' | 'forward' | 'backward' | 'toBack') => {
@@ -2218,6 +2245,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     reorderObjectByDrop,
     renameLayer,
     reorderLayer,
+    setLayerParent,
     arrangeSelectionLayer,
     alignSelection,
     distributeSelection,
