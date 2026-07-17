@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useCanvas, TOOLS } from './hooks/useCanvas';
 import { useKeyboard } from './hooks/useKeyboard';
@@ -13,6 +13,7 @@ import ActionButtons from './components/ActionButtons';
 import ExportModal from './components/ExportModal';
 import SettingsModal from './components/SettingsModal';
 import AboutModal from './components/AboutModal';
+import { getDefaultProjectFilename, parseProjectFile, stringifyProjectFile } from './utils/projectFile';
 import type { KeyboardShortcut, ComponentType } from './types';
 import './App.css';
 
@@ -100,7 +101,9 @@ function App() {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [shareToast, setShareToast] = useState(false);
+  const [fileToast, setFileToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; onSelection: boolean } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load objects from URL hash on mount
   useShareUrl(loadObjects);
@@ -120,6 +123,43 @@ function App() {
       moveSelectionToLayer(DEFAULT_LAYER_ID);
     }
   }, [canGroupSelection, canUngroupSelection, createLayerFromSelection, moveSelectionToLayer]);
+
+  const showFileToast = useCallback((type: 'success' | 'error', message: string) => {
+    setFileToast({ type, message });
+    window.setTimeout(() => setFileToast(null), 2400);
+  }, []);
+
+  const handleSaveProject = useCallback(() => {
+    const blob = new Blob([stringifyProjectFile(objects)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = getDefaultProjectFilename();
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showFileToast('success', 'Project saved.');
+  }, [objects, showFileToast]);
+
+  const handleLoadProject = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleProjectFileChange = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const loadedObjects = parseProjectFile(text);
+      loadObjects(loadedObjects);
+      showFileToast('success', `Loaded ${file.name}.`);
+    } catch {
+      showFileToast('error', 'Could not load that Wiretext file.');
+    }
+  }, [loadObjects, showFileToast]);
 
   const shortcuts: KeyboardShortcut[] = [
     { key: 'b', handler: () => setTool(TOOLS.BOX) },
@@ -158,6 +198,10 @@ function App() {
     { key: 'a', meta: true, handler: () => selectAll() },
     { key: 'g', meta: true, handler: () => groupOrUngroupSelection() },
     { key: 'g', meta: true, shift: true, handler: () => moveSelectionToLayer(DEFAULT_LAYER_ID) },
+    { key: 's', ctrl: true, handler: () => handleSaveProject() },
+    { key: 'o', ctrl: true, handler: () => handleLoadProject() },
+    { key: 's', meta: true, handler: () => handleSaveProject() },
+    { key: 'o', meta: true, handler: () => handleLoadProject() },
     { key: ']', meta: true, handler: () => arrangeSelectionLayer('toFront') },
     { key: ']', handler: () => arrangeSelectionLayer('forward') },
     { key: '[', handler: () => arrangeSelectionLayer('backward') },
@@ -260,6 +304,13 @@ function App() {
     <div className={`theme-${theme} flex h-screen w-screen flex-col bg-bg font-mono antialiased`}>
       {/* Hidden H1 for accessibility */}
       <h1 className="sr-only">Wiretext: Unicode wireframe design tool — draw with text</h1>
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        accept=".wiretext,application/json,.json"
+        onChange={handleProjectFileChange}
+      />
 
       {/* Main content area */}
       <div className="flex flex-1 overflow-hidden">
@@ -282,6 +333,8 @@ function App() {
           {/* Action buttons overlay */}
           <ActionButtons
             onClear={clearAll}
+            onSave={handleSaveProject}
+            onLoad={handleLoadProject}
             onExport={handleExport}
             onShare={handleShare}
             onSettings={() => setShowSettingsModal(true)}
@@ -291,6 +344,15 @@ function App() {
           {shareToast && (
             <div className="absolute top-14 right-3 z-20 px-3 py-2 bg-green-600 text-white text-xs rounded shadow-lg animate-fade-in">
               ✓ Share URL copied to clipboard!
+            </div>
+          )}
+          {fileToast && (
+            <div
+              className={`absolute top-14 right-3 z-20 rounded px-3 py-2 text-xs text-white shadow-lg animate-fade-in ${
+                fileToast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
+              }`}
+            >
+              {fileToast.message}
             </div>
           )}
 

@@ -2,12 +2,21 @@ import React from 'react';
 
 interface ActionButtonsProps {
   onClear: () => void;
+  onSave: () => void;
+  onLoad: () => void;
   onExport: () => void;
   onShare: () => void;
   onSettings: () => void;
 }
 
-const ActionButtons: React.FC<ActionButtonsProps> = ({ onClear, onExport, onShare, onSettings }) => {
+const ActionButtons: React.FC<ActionButtonsProps> = ({
+  onClear,
+  onSave,
+  onLoad,
+  onExport,
+  onShare,
+  onSettings,
+}) => {
   return (
     <div className="absolute top-3 right-3 flex gap-2 z-10">
       <button
@@ -15,6 +24,20 @@ const ActionButtons: React.FC<ActionButtonsProps> = ({ onClear, onExport, onShar
         onClick={onClear}
       >
         Clear All
+      </button>
+      <button
+        className="rounded border border-border bg-surface px-3 py-1.5 text-text-dim text-xs transition-colors hover:bg-surface-hover hover:text-text"
+        onClick={onSave}
+        title="Save project (Ctrl+S)"
+      >
+        Save
+      </button>
+      <button
+        className="rounded border border-border bg-surface px-3 py-1.5 text-text-dim text-xs transition-colors hover:bg-surface-hover hover:text-text"
+        onClick={onLoad}
+        title="Load project (Ctrl+O)"
+      >
+        Load
       </button>
       <button
         className="rounded border border-border bg-surface px-3 py-1.5 text-text-dim text-xs transition-colors hover:bg-surface-hover hover:text-text"

@@ -26,6 +26,8 @@ const SHORTCUTS = [
   { keys: '⇧⌘Z', action: 'Redo' },
   { keys: '⌘C', action: 'Copy' },
   { keys: '⌘D', action: 'Duplicate' },
+  { keys: '⌘S', action: 'Save project' },
+  { keys: '⌘O', action: 'Load project' },
   { keys: '[ / ]', action: 'Reorder' },
   { keys: '⌘[', action: 'Send to back' },
   { keys: '⌘]', action: 'Bring to front' },
