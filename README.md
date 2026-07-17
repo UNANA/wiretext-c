@@ -35,6 +35,7 @@ Fixes and polish in this cycle include clearer layer/inspector labeling for conn
 - `Vite 7`
 - `Tailwind CSS`
 - `lz-string`
+- `Tauri 2`
 
 ## Getting started
 
@@ -57,11 +58,25 @@ npm run dev
 
 Open [http://localhost:5173](http://localhost:5173).
 
+### Run as a desktop app
+
+```bash
+npm run tauri:dev
+```
+
 ### Build
 
 ```bash
 npm run build
 ```
+
+### Build desktop installers
+
+```bash
+npm run tauri:build
+```
+
+Windows bundles are generated under `src-tauri/target/release/bundle/`.
 
 ### Preview build
 
