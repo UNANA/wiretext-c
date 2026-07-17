@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import type { CanvasLayer, CanvasObject } from '../types';
 import { compareObjectsByStackOrder } from '../utils/boxDrawing';
 
@@ -7,6 +7,7 @@ interface LayersPanelProps {
   objects: CanvasObject[];
   selectedIds: Set<string>;
   onSelectObject: (id: string, addToSelection?: boolean) => void;
+  onSelectObjects: (ids: string[], addToSelection?: boolean) => void;
   onUpdateObject: (id: string, updates: Partial<CanvasObject>) => void;
   onMoveSelectionToLayer: (layerId: string) => void;
   onMoveObjectToLayer: (objectId: string, layerId: string) => void;
@@ -39,6 +40,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
   objects,
   selectedIds,
   onSelectObject,
+  onSelectObjects,
   onUpdateObject,
   onMoveSelectionToLayer,
   onMoveObjectToLayer,
@@ -56,6 +58,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
   const [dropTargetObjectId, setDropTargetObjectId] = useState<string | null>(null);
   const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
   const [draftAnnotation, setDraftAnnotation] = useState('');
+  const lastSelectedObjectId = useRef<string | null>(null);
   const layersWithObjects = useMemo(() => {
     const byLayer = new Map<string, CanvasObject[]>();
     for (const obj of objects) {
@@ -72,6 +75,26 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
         objects: [...(byLayer.get(layer.id) ?? [])].sort(compareObjectsByStackOrder),
       }));
   }, [layers, objects]);
+  const visibleObjectIds = useMemo(
+    () => layersWithObjects.flatMap(layer => layer.objects.map(obj => obj.id)),
+    [layersWithObjects]
+  );
+
+  const handleObjectSelection = (event: React.MouseEvent, objectId: string) => {
+    if (event.shiftKey && lastSelectedObjectId.current) {
+      const anchorIndex = visibleObjectIds.indexOf(lastSelectedObjectId.current);
+      const targetIndex = visibleObjectIds.indexOf(objectId);
+      if (anchorIndex >= 0 && targetIndex >= 0) {
+        const start = Math.min(anchorIndex, targetIndex);
+        const end = Math.max(anchorIndex, targetIndex);
+        onSelectObjects(visibleObjectIds.slice(start, end + 1), event.ctrlKey || event.metaKey);
+        lastSelectedObjectId.current = objectId;
+        return;
+      }
+    }
+    onSelectObject(objectId, event.ctrlKey || event.metaKey || event.shiftKey);
+    lastSelectedObjectId.current = objectId;
+  };
 
   const activeLayerId = objects.find((obj) => selectedIds.has(obj.id))?.layerId ?? layersWithObjects[0]?.id ?? '';
 
@@ -232,7 +255,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                     setDropTargetObjectId(null);
                     setDropTargetLayerId(null);
                   }}
-                  onClick={() => onSelectObject(obj.id)}
+                  onClick={(event) => handleObjectSelection(event, obj.id)}
                   className={`flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs ${selectedIds.has(obj.id) ? 'bg-accent/30 text-text' : 'text-text-dim hover:bg-surface'
                     } ${dropTargetObjectId === obj.id ? 'ring-1 ring-accent' : ''}`}
                   title={getObjectTitle(obj)}

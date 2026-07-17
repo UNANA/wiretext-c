@@ -7,6 +7,7 @@ interface PropertiesPanelProps {
   selectedObjects: CanvasObject[];
   objectsCount: number;
   onUpdateObject?: (id: string, updates: Partial<CanvasObject>) => void;
+  onUpdateSelection?: (updates: Partial<CanvasObject>) => void;
 }
 
 const STYLE_OPTIONS: { value: BoxStyle; label: string; preview: string }[] = [
@@ -33,6 +34,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   selectedObjects,
   objectsCount,
   onUpdateObject,
+  onUpdateSelection,
 }) => {
   const toolLabels: Record<Tool, string> = {
     select: 'Select',
@@ -76,15 +78,119 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </>
         )}
 
-        {selectedObjects.length > 1 && (
+        {selectedObjects.length > 1 && onUpdateSelection && (
           <>
             <div className="h-px bg-border my-2" />
-            <div className="text-2xs text-text-dim uppercase tracking-wider mb-2">
-              {selectedObjects.length} objects selected
-            </div>
+            <MultipleObjectProperties objects={selectedObjects} onUpdateSelection={onUpdateSelection} />
           </>
         )}
 
+      </div>
+    </div>
+  );
+};
+
+interface MultipleObjectPropertiesProps {
+  objects: CanvasObject[];
+  onUpdateSelection: (updates: Partial<CanvasObject>) => void;
+}
+
+const MultipleObjectProperties: React.FC<MultipleObjectPropertiesProps> = ({ objects, onUpdateSelection }) => {
+  const sharedValue = <K extends keyof CanvasObject,>(key: K): CanvasObject[K] | undefined => {
+    const first = objects[0][key];
+    return objects.every(obj => obj[key] === first) ? first : undefined;
+  };
+  const allBordered = objects.every(obj => obj.type === 'box' || obj.type === 'component');
+  const allRotatable = objects.every(obj => (obj.type === 'line' && !obj.isConnector) || obj.type === 'arrow');
+  const allConnectors = objects.every(obj => obj.type === 'line' && obj.isConnector);
+  const borderStyle = sharedValue('borderStyle');
+  const fill = sharedValue('fill');
+  const rotation = sharedValue('rotation');
+  const annotation = sharedValue('annotation');
+
+  return (
+    <div className="space-y-4">
+      <div className="text-2xs text-text-dim uppercase tracking-wider">
+        {objects.length} objects selected
+      </div>
+
+      {allBordered && (
+        <div>
+          <label className="block text-2xs text-text-dim mb-1">Border Style</label>
+          <div className="flex gap-1">
+            {STYLE_OPTIONS.map(style => (
+              <button
+                key={style.value}
+                onClick={() => onUpdateSelection({ borderStyle: style.value })}
+                className={`flex-1 py-1 px-2 rounded text-xs font-mono transition-colors ${borderStyle === style.value ? 'bg-accent text-bg' : 'bg-surface-hover text-text-dim hover:text-text'}`}
+                title={style.label}
+              >
+                {style.preview}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {allBordered && (
+        <div>
+          <label className="block text-2xs text-text-dim mb-1">Fill</label>
+          <select
+            value={fill ?? ''}
+            onChange={(e) => onUpdateSelection({ fill: e.target.value as CanvasObject['fill'] })}
+            className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
+          >
+            {fill === undefined && <option value="" disabled>Mixed</option>}
+            {FILL_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </div>
+      )}
+
+      {allRotatable && (
+        <div>
+          <label className="block text-2xs text-text-dim mb-1">Rotation</label>
+          <input
+            type="number"
+            min={0}
+            max={720}
+            value={rotation ?? ''}
+            placeholder="Mixed"
+            onChange={(e) => e.target.value !== '' && onUpdateSelection({ rotation: Math.min(720, Math.max(0, parseInt(e.target.value) || 0)) })}
+            className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
+          />
+        </div>
+      )}
+
+      {allConnectors && (
+        <div className="grid grid-cols-2 gap-2">
+          {(['connectorFromHead', 'connectorToHead'] as const).map((key) => {
+            const value = sharedValue(key);
+            return (
+              <div key={key}>
+                <label className="block text-2xs text-text-dim mb-1">{key === 'connectorFromHead' ? 'From head' : 'To head'}</label>
+                <select
+                  value={value ?? ''}
+                  onChange={(e) => onUpdateSelection({ [key]: e.target.value as ConnectorHeadStyle })}
+                  className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
+                >
+                  {value === undefined && <option value="" disabled>Mixed</option>}
+                  {CONNECTOR_HEAD_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div>
+        <label className="block text-2xs text-text-dim mb-1">Annotation</label>
+        <input
+          type="text"
+          value={annotation ?? ''}
+          placeholder={annotation === undefined ? 'Mixed' : 'Add note...'}
+          onChange={(e) => onUpdateSelection({ annotation: e.target.value || undefined })}
+          className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
+        />
       </div>
     </div>
   );
