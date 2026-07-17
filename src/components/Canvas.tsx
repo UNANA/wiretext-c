@@ -75,7 +75,8 @@ interface CanvasProps {
     col: number,
     row: number,
     handle?: ResizeHandle | null,
-    groupHandle?: GroupResizeHandle | null
+    groupHandle?: GroupResizeHandle | null,
+    addToSelection?: boolean
   ) => void;
   handleCellMouseMove: (col: number, row: number) => void;
   handleCellMouseUp: () => void;
@@ -166,6 +167,7 @@ const Canvas: React.FC<CanvasProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const lastPanPos = useRef<{ x: number; y: number } | null>(null);
+  const suppressNextContextMenu = useRef(false);
 
   // Measure actual character dimensions
   const { metrics, measureRef } = useCharMetrics(zoom);
@@ -186,9 +188,13 @@ const Canvas: React.FC<CanvasProps> = ({
   }, [panX, panY, charWidth, lineHeight, gridSize.cols, gridSize.rows]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.button === 1 || (e.button === 0 && e.shiftKey) || (e.button === 0 && tool === 'pan')) {
+    const leftAndRightPressed = (e.buttons & 3) === 3;
+    if (leftAndRightPressed || e.button === 1 || (e.button === 0 && tool === 'pan')) {
+      if (leftAndRightPressed) suppressNextContextMenu.current = true;
       setIsPanning(true);
+      setIsDragging(false);
       lastPanPos.current = { x: e.clientX, y: e.clientY };
+      if (leftAndRightPressed) handleCellMouseUp();
       e.preventDefault();
       return;
     }
@@ -196,7 +202,7 @@ const Canvas: React.FC<CanvasProps> = ({
     if (e.button === 0) {
       const pos = screenToGrid(e.clientX, e.clientY);
       setIsDragging(true);
-      handleCellMouseDown(pos.col, pos.row, null);
+      handleCellMouseDown(pos.col, pos.row, null, null, e.shiftKey || e.ctrlKey || e.metaKey);
     }
   }, [screenToGrid, handleCellMouseDown, tool]);
 
@@ -217,8 +223,17 @@ const Canvas: React.FC<CanvasProps> = ({
     }
   }, [tool, screenToGrid, objects, setEditingObjectId]);
 
-  const handleMouseMove = useCallback((e: { clientX: number; clientY: number }) => {
-    // Handle panning via middle-click or Shift+click drag
+  const handleMouseMove = useCallback((e: { clientX: number; clientY: number; buttons: number }) => {
+    if ((e.buttons & 3) === 3 && !isPanning) {
+      suppressNextContextMenu.current = true;
+      setIsPanning(true);
+      setIsDragging(false);
+      lastPanPos.current = { x: e.clientX, y: e.clientY };
+      handleCellMouseUp();
+      return;
+    }
+
+    // Handle panning via middle-click, pan tool, or left+right chord.
     if (isPanning && lastPanPos.current) {
       const dx = e.clientX - lastPanPos.current.x;
       const dy = e.clientY - lastPanPos.current.y;
@@ -230,7 +245,7 @@ const Canvas: React.FC<CanvasProps> = ({
     if (!isDragging) return;
     const pos = screenToGrid(e.clientX, e.clientY);
     handleCellMouseMove(pos.col, pos.row);
-  }, [isDragging, isPanning, screenToGrid, handleCellMouseMove, panViewport]);
+  }, [isDragging, isPanning, screenToGrid, handleCellMouseMove, handleCellMouseUp, panViewport]);
 
   const handleMouseUp = useCallback(() => {
     setIsDragging(false);
@@ -241,6 +256,10 @@ const Canvas: React.FC<CanvasProps> = ({
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
+    if (suppressNextContextMenu.current) {
+      suppressNextContextMenu.current = false;
+      return;
+    }
     const pos = screenToGrid(e.clientX, e.clientY);
     const hit = hitTest(objects, pos.col, pos.row);
     const onSelection = (!!hit && selectedIds.has(hit.id)) || selectedIds.size > 0;

@@ -67,9 +67,11 @@ function App() {
     clearAll,
     selectedObjects,
     selectObject,
+    selectObjects,
     objectsCount,
     cursor,
     updateObject,
+    updateSelection,
     editingObjectId,
     setEditingObjectId,
     loadObjects,
@@ -93,6 +95,8 @@ function App() {
     renameLayer,
     reorderLayer,
     arrangeSelectionLayer,
+    alignSelection,
+    distributeSelection,
     setZoom,
     zoomViewport,
   } = useCanvas({ smartGuidesEnabled });
@@ -263,6 +267,14 @@ function App() {
       { id: 'forward', label: 'Bring forward', shortcut: ']', onClick: () => arrangeSelectionLayer('forward') },
       { id: 'backward', label: 'Send Backward', shortcut: '[', onClick: () => arrangeSelectionLayer('backward') },
       { id: 'to-back', label: 'Send to back', shortcut: '⌘[', onClick: () => arrangeSelectionLayer('toBack') },
+      { id: 'align-left', label: 'Align left', shortcut: '', onClick: () => alignSelection('left') },
+      { id: 'align-center-h', label: 'Align horizontal centers', shortcut: '', onClick: () => alignSelection('centerHorizontal') },
+      { id: 'align-right', label: 'Align right', shortcut: '', onClick: () => alignSelection('right') },
+      { id: 'align-top', label: 'Align top', shortcut: '', onClick: () => alignSelection('top') },
+      { id: 'align-center-v', label: 'Align vertical centers', shortcut: '', onClick: () => alignSelection('centerVertical') },
+      { id: 'align-bottom', label: 'Align bottom', shortcut: '', onClick: () => alignSelection('bottom') },
+      { id: 'distribute-h', label: 'Distribute horizontally', shortcut: '', onClick: () => distributeSelection('horizontal') },
+      { id: 'distribute-v', label: 'Distribute vertically', shortcut: '', onClick: () => distributeSelection('vertical') },
       groupItem,
     ];
   }, [
@@ -275,6 +287,8 @@ function App() {
     deleteSelection,
     duplicateSelection,
     arrangeSelectionLayer,
+    alignSelection,
+    distributeSelection,
   ]);
 
   const canvasMenuItems = useMemo<ContextMenuItem[]>(() => ([
@@ -284,9 +298,9 @@ function App() {
 
   const activeMenuItems = contextMenu?.onSelection ? selectedMenuItems : canvasMenuItems;
   const menuWidth = 260;
-  const menuHeight = (activeMenuItems.length * 32) + 8;
+  const menuHeight = Math.min((activeMenuItems.length * 32) + 8, window.innerHeight - 16);
   const menuLeft = contextMenu ? Math.min(contextMenu.x, window.innerWidth - menuWidth - 8) : 0;
-  const menuTop = contextMenu ? Math.min(contextMenu.y, window.innerHeight - menuHeight - 8) : 0;
+  const menuTop = contextMenu ? Math.max(8, Math.min(contextMenu.y, window.innerHeight - menuHeight - 8)) : 0;
 
   if (isMobile) {
     return (
@@ -384,7 +398,7 @@ function App() {
           />
           {contextMenu && (
             <div
-              className="fixed z-40 min-w-[260px] select-none rounded-md border border-border bg-surface p-1 shadow-2xl"
+              className="fixed z-40 min-w-[260px] max-h-[calc(100vh-16px)] select-none overflow-y-auto rounded-md border border-border bg-surface p-1 shadow-2xl"
               style={{ left: menuLeft, top: menuTop }}
               onMouseDown={(e) => e.stopPropagation()}
             >
@@ -438,6 +452,7 @@ function App() {
                 selectedObjects={selectedObjects}
                 objectsCount={objectsCount}
                 onUpdateObject={updateObject}
+                onUpdateSelection={updateSelection}
               />
             ) : (
               <LayersPanel
@@ -445,6 +460,7 @@ function App() {
                 objects={objects}
                 selectedIds={selectedIds}
                 onSelectObject={selectObject}
+                onSelectObjects={selectObjects}
                 onUpdateObject={updateObject}
                 onMoveSelectionToLayer={moveSelectionToLayer}
                 onMoveObjectToLayer={moveObjectToLayer}
