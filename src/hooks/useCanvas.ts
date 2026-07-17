@@ -73,6 +73,7 @@ export interface UseCanvasReturn {
   // Actions
   addObject: (obj: Omit<CanvasObject, 'id' | 'zIndex'>) => CanvasObject;
   updateObject: (id: string, updates: Partial<CanvasObject>) => void;
+  updateSelection: (updates: Partial<CanvasObject>) => void;
   deleteObject: (id: string) => void;
   deleteSelection: () => void;
   moveObject: (id: string, dCol: number, dRow: number) => void;
@@ -80,12 +81,14 @@ export interface UseCanvasReturn {
   resizeObject: (id: string, width: number, height: number) => void;
   clearAll: () => void;
   selectObject: (id: string, addToSelection?: boolean) => void;
+  selectObjects: (ids: string[], addToSelection?: boolean) => void;
   clearSelection: () => void;
   handleCellMouseDown: (
     col: number,
     row: number,
     handle?: ResizeHandle | null,
-    groupHandle?: GroupResizeHandle | null
+    groupHandle?: GroupResizeHandle | null,
+    addToSelection?: boolean
   ) => void;
   handleCellMouseMove: (col: number, row: number) => void;
   handleCellMouseUp: () => void;
@@ -115,6 +118,8 @@ export interface UseCanvasReturn {
   renameLayer: (layerId: string, name: string) => void;
   reorderLayer: (dragLayerId: string, targetLayerId: string) => void;
   arrangeSelectionLayer: (mode: 'toFront' | 'forward' | 'backward' | 'toBack') => void;
+  alignSelection: (mode: 'left' | 'centerHorizontal' | 'right' | 'top' | 'centerVertical' | 'bottom') => void;
+  distributeSelection: (axis: 'horizontal' | 'vertical') => void;
 
   // Getters
   selectedObjects: CanvasObject[];
@@ -956,6 +961,14 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     });
   }, [clamp, ensureSpace, gridSize.cols, gridSize.rows, syncConnectorLines]);
 
+  const updateSelection = useCallback((updates: Partial<CanvasObject>) => {
+    if (selectedIds.size === 0) return;
+    pushHistory();
+    setObjects(prev => normalizeStackOrder(syncConnectorLines(prev.map(obj => (
+      selectedIds.has(obj.id) ? { ...obj, ...updates } : obj
+    )))));
+  }, [pushHistory, selectedIds, syncConnectorLines]);
+
   const deleteObject = useCallback((id: string) => {
     pushHistory();
     setObjects(prev => normalizeStackOrder(prev.filter(obj => obj.id !== id)));
@@ -1093,6 +1106,14 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       } else {
         next.add(id);
       }
+      return next;
+    });
+  }, []);
+
+  const selectObjects = useCallback((ids: string[], addToSelection: boolean = false) => {
+    setSelectedIds(prev => {
+      const next = new Set(addToSelection ? prev : []);
+      ids.forEach(id => next.add(id));
       return next;
     });
   }, []);
@@ -1384,6 +1405,74 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     }))));
   }, [layers, objects, pushHistory, selectedIds]);
 
+  const repositionSelection = useCallback((deltas: Map<string, Position>) => {
+    if (deltas.size === 0) return;
+    pushHistory();
+    setObjects(prev => normalizeStackOrder(syncConnectorLines(prev.map(obj => {
+      const delta = deltas.get(obj.id);
+      if (!delta || (delta.col === 0 && delta.row === 0)) return obj;
+      const moved = {
+        ...obj,
+        position: { col: obj.position.col + delta.col, row: obj.position.row + delta.row },
+      };
+      if (obj.endPosition) {
+        moved.endPosition = { col: obj.endPosition.col + delta.col, row: obj.endPosition.row + delta.row };
+      }
+      if (obj.points) {
+        moved.points = obj.points.map(point => ({ col: point.col + delta.col, row: point.row + delta.row }));
+      }
+      return moved;
+    }))));
+  }, [pushHistory, syncConnectorLines]);
+
+  const alignSelection = useCallback((mode: 'left' | 'centerHorizontal' | 'right' | 'top' | 'centerVertical' | 'bottom') => {
+    if (selectedObjects.length < 2) return;
+    const boxes = selectedObjects.map(obj => ({ obj, box: getBoundingBox(obj) }));
+    const left = Math.min(...boxes.map(({ box }) => box.col));
+    const right = Math.max(...boxes.map(({ box }) => box.col + box.width - 1));
+    const top = Math.min(...boxes.map(({ box }) => box.row));
+    const bottom = Math.max(...boxes.map(({ box }) => box.row + box.height - 1));
+    const deltas = new Map<string, Position>();
+    boxes.forEach(({ obj, box }) => {
+      let col = 0;
+      let row = 0;
+      if (mode === 'left') col = left - box.col;
+      if (mode === 'centerHorizontal') col = Math.round((left + right - (box.width - 1)) / 2) - box.col;
+      if (mode === 'right') col = right - (box.col + box.width - 1);
+      if (mode === 'top') row = top - box.row;
+      if (mode === 'centerVertical') row = Math.round((top + bottom - (box.height - 1)) / 2) - box.row;
+      if (mode === 'bottom') row = bottom - (box.row + box.height - 1);
+      deltas.set(obj.id, { col, row });
+    });
+    repositionSelection(deltas);
+  }, [repositionSelection, selectedObjects]);
+
+  const distributeSelection = useCallback((axis: 'horizontal' | 'vertical') => {
+    if (selectedObjects.length < 3) return;
+    const entries = selectedObjects
+      .map(obj => ({ obj, box: getBoundingBox(obj) }))
+      .sort((a, b) => axis === 'horizontal' ? a.box.col - b.box.col : a.box.row - b.box.row);
+    const first = entries[0].box;
+    const last = entries[entries.length - 1].box;
+    const span = axis === 'horizontal'
+      ? last.col + last.width - first.col
+      : last.row + last.height - first.row;
+    const occupied = entries.reduce((sum, entry) => sum + (axis === 'horizontal' ? entry.box.width : entry.box.height), 0);
+    const gap = (span - occupied) / (entries.length - 1);
+    let cursor = axis === 'horizontal' ? first.col : first.row;
+    const deltas = new Map<string, Position>();
+    entries.forEach(({ obj, box }, index) => {
+      const target = index === entries.length - 1
+        ? (axis === 'horizontal' ? last.col : last.row)
+        : Math.round(cursor);
+      deltas.set(obj.id, axis === 'horizontal'
+        ? { col: target - box.col, row: 0 }
+        : { col: 0, row: target - box.row });
+      cursor += (axis === 'horizontal' ? box.width : box.height) + gap;
+    });
+    repositionSelection(deltas);
+  }, [repositionSelection, selectedObjects]);
+
   // --- Load objects (for share URL) ---
   const loadObjects = useCallback((objs: CanvasObject[]) => {
     const normalized = normalizeStackOrder(syncConnectorLines(objs));
@@ -1407,7 +1496,8 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     col: number,
     row: number,
     resizeHandle?: ResizeHandle | null,
-    groupHandle?: GroupResizeHandle | null
+    groupHandle?: GroupResizeHandle | null,
+    addToSelection: boolean = false
   ) => {
     setCursor({ col, row });
     setAlignmentGuides([]);
@@ -1460,6 +1550,10 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       const hit = hitTest(objects, col, row);
 
       if (hit) {
+        if (addToSelection) {
+          selectObject(hit.id, true);
+          return;
+        }
         const handle = getResizeHandle(hit, col, row);
         if (handle && selectedIds.has(hit.id)) {
           pushHistory();
@@ -2090,6 +2184,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     alignmentGuides,
     addObject,
     updateObject,
+    updateSelection,
     deleteObject,
     deleteSelection,
     moveObject,
@@ -2097,6 +2192,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     resizeObject,
     clearAll,
     selectObject,
+    selectObjects,
     clearSelection,
     handleCellMouseDown,
     handleCellMouseMove,
@@ -2123,6 +2219,8 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     renameLayer,
     reorderLayer,
     arrangeSelectionLayer,
+    alignSelection,
+    distributeSelection,
     selectedObjects,
     objectsCount,
     cursor,
