@@ -3,7 +3,6 @@ import { flushSync } from 'react-dom';
 import {
   renderObjectsToGrid,
   createDefaultObject,
-  compareObjectsByStackOrder,
   hitTest,
   getResizeHandle,
   getLineLength,
@@ -14,20 +13,27 @@ import {
   calculateGridSize,
   generateId,
 } from '../utils/boxDrawing';
+import { type LayerDropPlacement } from '../utils/layerDragDrop';
 import {
-  reorderLayersByDrop,
-  reparentChildrenOnDelete,
-  migrateLegacyLayerParentIds,
-  type LayerDropPlacement,
-} from '../utils/layerDragDrop';
-import {
+  buildPaintOrder,
+  canReparentObject,
   collectObjectDescendants,
+  normalizeSiblingOrder,
   remapParentIdsForClones,
   removeObjectsAndReparentChildren,
   resolveObjectDropParent,
-  sanitizeObjectParents,
+  sortObjectsByStackOrder,
 } from '../utils/objectHierarchy';
-import { remapObjectsAndLayersForAdditiveLoad } from '../utils/loadMerge';
+import {
+  DEFAULT_LAYER_ID,
+  DEFAULT_LAYER_NAME,
+  createLayerObject,
+  findLayerAncestorId,
+  isLayerObject,
+  migrateToUnifiedTree,
+  type CanvasLayer,
+} from '../utils/layerMigration';
+import { remapObjectsForAdditiveLoad } from '../utils/loadMerge';
 import type {
   Grid,
   Tool,
@@ -37,7 +43,6 @@ import type {
   DragState,
   ResizeHandle,
   GridSize,
-  CanvasLayer,
   AlignmentGuide,
   GroupResizeHandle,
 } from '../types';
@@ -81,7 +86,9 @@ export interface UseCanvasReturn {
   editingObjectId: string | null;
   setEditingObjectId: (id: string | null) => void;
   marquee: MarqueeState | null;
-  layers: CanvasLayer[];
+  // Layer nodes (type === 'layer') in tree/paint order — a derived view of
+  // `objects`, which is the single source of truth.
+  layers: CanvasObject[];
   alignmentGuides: AlignmentGuide[];
 
   // Actions
@@ -149,133 +156,18 @@ const INITIAL_COLS = 120;
 const INITIAL_ROWS = 60;
 const EXPAND_MARGIN = 20;
 const MAX_HISTORY = 100;
-const DEFAULT_LAYER_ID = 'layer-1';
-const DEFAULT_LAYER_NAME = 'Layer 1';
 
-function ensureLayerFields(obj: CanvasObject): CanvasObject {
-  return {
-    ...obj,
-    layerId: obj.layerId ?? DEFAULT_LAYER_ID,
-    layerName: obj.layerName ?? DEFAULT_LAYER_NAME,
-    layerOrder: obj.layerOrder ?? 0,
-  };
-}
-
-function normalizeStackOrder(list: CanvasObject[], preferredLayerOrder: Map<string, number> = new Map()): CanvasObject[] {
-  const withLayers = list.map(ensureLayerFields);
-  const grouped = new Map<string, CanvasObject[]>();
-  for (const obj of withLayers) {
-    const key = obj.layerId ?? DEFAULT_LAYER_ID;
-    const layer = grouped.get(key) ?? [];
-    layer.push(obj);
-    grouped.set(key, layer);
-  }
-
-  const sortedLayers = [...grouped.values()]
-    .sort((a, b) => {
-      const aId = a[0]?.layerId ?? DEFAULT_LAYER_ID;
-      const bId = b[0]?.layerId ?? DEFAULT_LAYER_ID;
-      const aOrder = preferredLayerOrder.get(aId) ?? (a[0]?.layerOrder ?? 0);
-      const bOrder = preferredLayerOrder.get(bId) ?? (b[0]?.layerOrder ?? 0);
-      return aOrder - bOrder;
-    });
-
-  const normalized: CanvasObject[] = [];
-  sortedLayers.forEach((layer) => {
-    const layerId = layer[0]?.layerId ?? DEFAULT_LAYER_ID;
-    const layerOrder = preferredLayerOrder.get(layerId) ?? (layer[0]?.layerOrder ?? 0);
-    layer
-      .sort((a, b) => a.zIndex - b.zIndex)
-      .forEach((obj, zIndex) => {
-        normalized.push({
-          ...obj,
-          layerOrder,
-          zIndex,
-        });
-      });
-  });
-
-  return normalized;
-}
-
-// Reconstructs each layer's name/order/objectCount from the objects that
-// belong to it. Layer hierarchy (parentId) is intentionally NOT derived
-// here: `layersState` is the single source of truth for parent/child
-// relationships, since deriving it from an arbitrary "first object of the
-// layer" was unreliable (see reorderLayer/setLayerParent below).
-function buildLayers(list: CanvasObject[]): CanvasLayer[] {
-  const grouped = new Map<string, CanvasObject[]>();
-  for (const obj of list.map(ensureLayerFields)) {
-    const key = obj.layerId ?? DEFAULT_LAYER_ID;
-    const layer = grouped.get(key) ?? [];
-    layer.push(obj);
-    grouped.set(key, layer);
-  }
-
-  const fromObjects = [...grouped.entries()]
-    .map(([id, objectsInLayer]) => ({
-      id,
-      name: objectsInLayer[0]?.layerName || DEFAULT_LAYER_NAME,
-      order: objectsInLayer[0]?.layerOrder ?? 0,
-      objectCount: objectsInLayer.length,
-    }))
-    .sort((a, b) => a.order - b.order);
-
-  if (fromObjects.length === 0) {
-    return [{ id: DEFAULT_LAYER_ID, name: DEFAULT_LAYER_NAME, order: 0, objectCount: 0 }];
-  }
-  return fromObjects;
-}
-
-// Resolves the layer list for a batch of loaded objects: prefers the
-// persisted `savedLayers` (name/order/hierarchy), falling back to
-// reconstructing/migrating from the objects themselves for legacy payloads
-// that predate persisted layer state. Shared by loadObjects (replace) and
-// addObjects (merge) so both interpret a project file's layers identically.
-function resolveIncomingLayers(
-  rawObjects: CanvasObject[],
-  normalizedObjects: CanvasObject[],
-  savedLayers?: CanvasLayer[],
-): CanvasLayer[] {
-  const reconstructed = buildLayers(normalizedObjects);
-  const reconstructedById = new Map(reconstructed.map(layer => [layer.id, layer]));
-
-  let resolved: CanvasLayer[];
-  if (savedLayers && savedLayers.length > 0) {
-    const savedById = new Map(savedLayers.map(layer => [layer.id, layer]));
-    const mergedIds = new Set<string>([
-      ...savedLayers.map(layer => layer.id),
-      ...reconstructed.map(layer => layer.id),
-    ]);
-    resolved = [...mergedIds].map((id) => {
-      const saved = savedById.get(id);
-      const fromObjects = reconstructedById.get(id);
-      return {
-        id,
-        name: saved?.name ?? fromObjects?.name ?? DEFAULT_LAYER_NAME,
-        order: saved?.order ?? fromObjects?.order ?? 0,
-        objectCount: fromObjects?.objectCount ?? 0,
-        parentId: saved?.parentId,
-      };
-    });
-  } else {
-    const legacyParents = migrateLegacyLayerParentIds(rawObjects, DEFAULT_LAYER_ID);
-    resolved = reconstructed.map(layer => ({
-      ...layer,
-      parentId: legacyParents.get(layer.id),
-    }));
-  }
-
-  return resolved
-    .sort((a, b) => a.order - b.order)
-    .map((layer, order) => ({ ...layer, order }));
+// Sibling-group key: undefined parentId (root) must compare equal to itself.
+function sameParent(a?: string, b?: string): boolean {
+  return (a ?? null) === (b ?? null);
 }
 
 export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvasReturn {
   const smartGuidesEnabled = options?.smartGuidesEnabled ?? true;
-  const [objects, setObjects] = useState<CanvasObject[]>([]);
-  const [layersState, setLayersState] = useState<CanvasLayer[]>([
-    { id: DEFAULT_LAYER_ID, name: DEFAULT_LAYER_NAME, order: 0, objectCount: 0 },
+  // The default layer node is part of the objects tree from the start —
+  // layers are ordinary (non-graphic) objects now.
+  const [objects, setObjects] = useState<CanvasObject[]>(() => [
+    createLayerObject(DEFAULT_LAYER_ID, DEFAULT_LAYER_NAME),
   ]);
   const [gridSize, setGridSize] = useState<GridSize>({ cols: INITIAL_COLS, rows: INITIAL_ROWS });
   const [tool, setTool] = useState<Tool>(TOOLS.SELECT);
@@ -650,38 +542,22 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     return renderObjectsToGrid(objects, gridSize);
   }, [objects, gridSize]);
 
+  // Global paint order (depth-first tree traversal); shared by every
+  // consumer that needs stacking-aware sorting.
+  const paintOrder = useMemo(() => buildPaintOrder(objects), [objects]);
+
   const selectedObjects = useMemo(() => {
     return objects
       .filter(obj => selectedIds.has(obj.id))
-      .sort(compareObjectsByStackOrder);
-  }, [objects, selectedIds]);
+      .sort((a, b) => (paintOrder.get(a.id) ?? 0) - (paintOrder.get(b.id) ?? 0));
+  }, [objects, selectedIds, paintOrder]);
 
-  const layers = useMemo(() => {
-    const objectLayers = buildLayers(objects);
-    const stateById = new Map(layersState.map(layer => [layer.id, layer]));
-    const objectById = new Map(objectLayers.map(layer => [layer.id, layer]));
-    const mergedIds = new Set<string>([
-      ...layersState.map(layer => layer.id),
-      ...objectLayers.map(layer => layer.id),
-    ]);
-
-    const merged = [...mergedIds].map((id, idx) => {
-      const fromState = stateById.get(id);
-      const fromObjects = objectById.get(id);
-      return {
-        id,
-        name: fromState?.name ?? fromObjects?.name ?? `Layer ${idx + 1}`,
-        order: fromState?.order ?? fromObjects?.order ?? idx,
-        objectCount: fromObjects?.objectCount ?? 0,
-        // layersState is the single source of truth for hierarchy.
-        parentId: fromState?.parentId,
-      };
-    });
-
-    return merged
-      .sort((a, b) => a.order - b.order)
-      .map((layer, order) => ({ ...layer, order }));
-  }, [layersState, objects]);
+  // Layer nodes in tree (paint) order — a plain derived view; the objects
+  // array itself is the single source of truth.
+  const layers = useMemo(
+    () => sortObjectsByStackOrder(objects).filter(isLayerObject),
+    [objects],
+  );
 
   const getAnchorPosition = useCallback((obj: CanvasObject, handle: ResizeHandle): Position => {
     const bbox = getBoundingBox(obj);
@@ -966,7 +842,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     });
   }, [getAnchorPosition, routeConnectorPath]);
 
-  const objectsCount = objects.length;
+  const objectsCount = objects.filter(obj => !isLayerObject(obj)).length;
   const canUndo = past.length > 0;
   const canRedo = future.length > 0;
 
@@ -979,12 +855,10 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       ...obj,
       id: generateId(),
       zIndex: objects.length,
-      layerId: DEFAULT_LAYER_ID,
-      layerName: DEFAULT_LAYER_NAME,
-      layerOrder: 0,
+      parentId: obj.parentId ?? DEFAULT_LAYER_ID,
     };
     pushHistory();
-    setObjects(prev => normalizeStackOrder([...prev, newObj]));
+    setObjects(prev => normalizeSiblingOrder([...prev, newObj]));
     return newObj;
   }, [objects.length, ensureSpace, pushHistory]);
 
@@ -1025,14 +899,14 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       }
 
       const updated = prev.map(o => o.id === id ? { ...o, ...nextUpdates } : o);
-      return normalizeStackOrder(syncConnectorLines(updated));
+      return normalizeSiblingOrder(syncConnectorLines(updated));
     });
   }, [clamp, ensureSpace, gridSize.cols, gridSize.rows, syncConnectorLines]);
 
   const updateSelection = useCallback((updates: Partial<CanvasObject>) => {
     if (selectedIds.size === 0) return;
     pushHistory();
-    setObjects(prev => normalizeStackOrder(syncConnectorLines(prev.map(obj => (
+    setObjects(prev => normalizeSiblingOrder(syncConnectorLines(prev.map(obj => (
       selectedIds.has(obj.id) ? { ...obj, ...updates } : obj
     )))));
   }, [pushHistory, selectedIds, syncConnectorLines]);
@@ -1041,7 +915,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
   // parent (same rule as layer deletion) instead of orphaning them.
   const deleteObject = useCallback((id: string) => {
     pushHistory();
-    setObjects(prev => normalizeStackOrder(removeObjectsAndReparentChildren(prev, new Set([id]))));
+    setObjects(prev => normalizeSiblingOrder(removeObjectsAndReparentChildren(prev, new Set([id]))));
     setSelectedIds(prev => {
       const next = new Set(prev);
       next.delete(id);
@@ -1052,7 +926,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
   const deleteSelection = useCallback(() => {
     if (selectedIds.size === 0) return;
     pushHistory();
-    setObjects(prev => normalizeStackOrder(removeObjectsAndReparentChildren(prev, selectedIds)));
+    setObjects(prev => normalizeSiblingOrder(removeObjectsAndReparentChildren(prev, selectedIds)));
     setSelectedIds(new Set());
   }, [selectedIds, pushHistory]);
 
@@ -1063,7 +937,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       const moving = prev.filter(obj => movingIds.has(obj.id));
       if (moving.length === 0) return prev;
       const bounded = clampDeltaForObjects(moving, dCol, dRow);
-      return normalizeStackOrder(syncConnectorLines(prev.map(obj => {
+      return normalizeSiblingOrder(syncConnectorLines(prev.map(obj => {
       if (!movingIds.has(obj.id)) return obj;
       const newCol = obj.position.col + bounded.dCol;
       const newRow = obj.position.row + bounded.dRow;
@@ -1102,7 +976,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       const movingIds = collectObjectDescendants(prev, selectedIds);
       const moving = prev.filter(obj => movingIds.has(obj.id));
       const bounded = clampDeltaForObjects(moving, dCol, dRow);
-      return normalizeStackOrder(syncConnectorLines(prev.map(obj => {
+      return normalizeSiblingOrder(syncConnectorLines(prev.map(obj => {
       if (!movingIds.has(obj.id)) return obj;
       const newCol = obj.position.col + bounded.dCol;
       const newRow = obj.position.row + bounded.dRow;
@@ -1135,7 +1009,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
   }, [selectedIds, clampDeltaForObjects, ensureSpace, syncConnectorLines]);
 
   const resizeObject = useCallback((id: string, width: number, height: number) => {
-    setObjects(prev => normalizeStackOrder(syncConnectorLines(prev.map(obj => {
+    setObjects(prev => normalizeSiblingOrder(syncConnectorLines(prev.map(obj => {
       if (obj.id !== id || !isResizable(obj)) return obj;
 
       if (obj.type === 'line' || obj.type === 'arrow') {
@@ -1168,8 +1042,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
 
   const clearAll = useCallback(() => {
     pushHistory();
-    setObjects([]);
-    setLayersState([{ id: DEFAULT_LAYER_ID, name: DEFAULT_LAYER_NAME, order: 0, objectCount: 0 }]);
+    setObjects([createLayerObject(DEFAULT_LAYER_ID, DEFAULT_LAYER_NAME)]);
     setSelectedIds(new Set());
     setGridSize({ cols: INITIAL_COLS, rows: INITIAL_ROWS });
   }, [pushHistory]);
@@ -1204,7 +1077,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       const hit = hitTest(prev, col, row);
       if (!hit) return prev;
       removedId = hit.id;
-      return normalizeStackOrder(removeObjectsAndReparentChildren(prev, new Set([hit.id])));
+      return normalizeSiblingOrder(removeObjectsAndReparentChildren(prev, new Set([hit.id])));
     });
     if (!removedId) return;
     setSelectedIds(prev => {
@@ -1285,7 +1158,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     // were not copied so pastes don't follow the original parent's moves.
     const newObjects = remapParentIdsForClones(cloned, idMap);
 
-    setObjects(prev => normalizeStackOrder([...prev, ...newObjects]));
+    setObjects(prev => normalizeSiblingOrder([...prev, ...newObjects]));
     setSelectedIds(newIds);
     // Update clipboard to pasted objects so subsequent paste offsets further
     setClipboard(newObjects);
@@ -1319,244 +1192,206 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     // set, detach clones whose parent was not duplicated.
     const duplicated = remapParentIdsForClones(cloned, idMap);
 
-    setObjects(prev => normalizeStackOrder([...prev, ...duplicated]));
+    setObjects(prev => normalizeSiblingOrder([...prev, ...duplicated]));
     setSelectedIds(newIds);
   }, [selectedIds, objects, pushHistory]);
 
   const selectAll = useCallback(() => {
-    setSelectedIds(new Set(objects.map(obj => obj.id)));
+    setSelectedIds(new Set(objects.filter(obj => !isLayerObject(obj)).map(obj => obj.id)));
   }, [objects]);
 
+  // Reparents every selection root (selected object whose parent is not
+  // also selected) to `layerId`. Descendants follow their parent through
+  // the tree, so subtrees keep their internal structure.
+  const reparentSelectionRoots = useCallback((prev: CanvasObject[], layerId: string): CanvasObject[] => {
+    return normalizeSiblingOrder(prev.map(obj => {
+      if (!selectedIds.has(obj.id)) return obj;
+      const parentSelected = obj.parentId !== undefined && selectedIds.has(obj.parentId);
+      return parentSelected ? obj : { ...obj, parentId: layerId };
+    }));
+  }, [selectedIds]);
+
   const createLayerFromSelection = useCallback(() => {
-    const nextOrder = layers.length > 0 ? Math.max(...layers.map(layer => layer.order)) + 1 : 0;
-    const nextLayerName = `Layer ${nextOrder + 1}`;
-    const nextLayerId = `layer-${Date.now()}`;
-    setLayersState(prev => [
-      ...prev,
-      { id: nextLayerId, name: nextLayerName, order: nextOrder, objectCount: 0 },
-    ]);
-
-    if (selectedIds.size === 0) return;
-
     pushHistory();
-    setObjects(prev => normalizeStackOrder(prev.map(obj => (
-      selectedIds.has(obj.id)
-        ? { ...obj, layerId: nextLayerId, layerName: nextLayerName, layerOrder: nextOrder }
-        : obj
-    ))));
-  }, [layers, pushHistory, selectedIds]);
+    setObjects(prev => {
+      const rootLayers = prev.filter(obj => isLayerObject(obj) && !obj.parentId);
+      const nextZIndex = rootLayers.length > 0 ? Math.max(...rootLayers.map(obj => obj.zIndex)) + 1 : 0;
+      const nextLayerName = `Layer ${prev.filter(isLayerObject).length + 1}`;
+      const layerNode = createLayerObject(`layer-${Date.now()}`, nextLayerName, { zIndex: nextZIndex });
+      return reparentSelectionRoots([...prev, layerNode], layerNode.id);
+    });
+  }, [pushHistory, reparentSelectionRoots]);
 
   const moveSelectionToLayer = useCallback((layerId: string) => {
     if (selectedIds.size === 0) return;
-    const targetLayer = layers.find(layer => layer.id === layerId);
+    const targetLayer = objects.find(obj => obj.id === layerId && isLayerObject(obj));
     if (!targetLayer) return;
     pushHistory();
-    setObjects(prev => normalizeStackOrder(prev.map(obj => (
-      selectedIds.has(obj.id)
-        ? { ...obj, layerId: targetLayer.id, layerName: targetLayer.name, layerOrder: targetLayer.order }
-        : obj
-    ))));
-  }, [layers, pushHistory, selectedIds]);
+    setObjects(prev => reparentSelectionRoots(prev, layerId));
+  }, [objects, pushHistory, reparentSelectionRoots, selectedIds]);
 
   const moveObjectToLayer = useCallback((objectId: string, layerId: string) => {
-    const targetLayer = layers.find(layer => layer.id === layerId);
+    const targetLayer = objects.find(obj => obj.id === layerId && isLayerObject(obj));
     if (!targetLayer) return;
+    if (!canReparentObject(objects, objectId, layerId)) return;
     pushHistory();
-    setObjects(prev => {
-      // Child objects follow their parent between layers so nested rows
-      // stay together in the panel.
-      const movingIds = collectObjectDescendants(prev, [objectId]);
-      // Moving to another layer detaches the object from a parent that
-      // stays behind; its own subtree keeps its internal structure.
-      return normalizeStackOrder(prev.map(obj => {
-        if (!movingIds.has(obj.id)) return obj;
-        const moved = { ...obj, layerId: targetLayer.id, layerName: targetLayer.name, layerOrder: targetLayer.order };
-        return obj.id === objectId ? { ...moved, parentId: undefined } : moved;
-      }));
-    });
+    // Moving to another layer detaches the object from a parent that stays
+    // behind; its own subtree follows it through the tree.
+    setObjects(prev => normalizeSiblingOrder(prev.map(obj => (
+      obj.id === objectId ? { ...obj, parentId: layerId } : obj
+    ))));
     setSelectedIds(new Set([objectId]));
-  }, [layers, pushHistory]);
+  }, [objects, pushHistory]);
 
-  // Drop an object onto another object in the layers panel. Placement
-  // mirrors layer drops (reorderLayersByDrop): 'inside' nests the dragged
-  // object as the target's child, 'before'/'after' makes it the target's
-  // sibling. A drop that would create a parent cycle is ignored.
-  const reorderObjectByDrop = useCallback((dragObjectId: string, targetObjectId: string, placement: LayerDropPlacement = 'before') => {
-    if (dragObjectId === targetObjectId) return;
+  // Single drop handler for the layers panel tree — layers and objects
+  // alike. Placement mirrors the old per-kind handlers: 'inside' nests the
+  // dragged node as the target's first child, 'before'/'after' makes it the
+  // target's sibling. Drops that would break an invariant (cycles, a layer
+  // under a non-layer, the default layer leaving the root, an object landing
+  // at the root) are ignored.
+  const reorderNodeByDrop = useCallback((dragId: string, targetId: string, placement: LayerDropPlacement = 'before') => {
+    if (dragId === targetId) return;
     pushHistory();
     setObjects(prev => {
-      const dragObj = prev.find(obj => obj.id === dragObjectId);
-      const targetObj = prev.find(obj => obj.id === targetObjectId);
-      if (!dragObj || !targetObj) return prev;
+      const dragged = prev.find(obj => obj.id === dragId);
+      const target = prev.find(obj => obj.id === targetId);
+      if (!dragged || !target) return prev;
 
-      const dropParent = resolveObjectDropParent(prev, dragObjectId, targetObj, placement);
+      const dropParent = resolveObjectDropParent(prev, dragId, target, placement);
       if (!dropParent.ok) return prev;
+      const parentId = dropParent.parentId;
+      const parent = parentId ? prev.find(obj => obj.id === parentId) : undefined;
+      if (parentId && !parent) return prev;
 
-      const sourceLayerId = dragObj.layerId ?? DEFAULT_LAYER_ID;
-      const targetLayerId = targetObj.layerId ?? DEFAULT_LAYER_ID;
-      const targetLayerName = targetObj.layerName ?? DEFAULT_LAYER_NAME;
-      const targetLayerOrder = targetObj.layerOrder ?? 0;
-
-      let updated = prev.map(obj => (
-        obj.id === dragObjectId
-          ? {
-              ...obj,
-              parentId: dropParent.parentId,
-              layerId: targetLayerId,
-              layerName: targetLayerName,
-              layerOrder: targetLayerOrder,
-            }
-          : obj
-      ));
-
-      const targetLayerObjects = updated
-        .filter(obj => (obj.layerId ?? DEFAULT_LAYER_ID) === targetLayerId)
-        .sort((a, b) => a.zIndex - b.zIndex);
-      const dragMoved = targetLayerObjects.find(obj => obj.id === dragObjectId);
-      if (!dragMoved) return prev;
-      const withoutDrag = targetLayerObjects.filter(obj => obj.id !== dragObjectId);
-      const targetIndex = withoutDrag.findIndex(obj => obj.id === targetObjectId);
-      const insertAt = targetIndex >= 0
-        ? (placement === 'before' ? targetIndex : targetIndex + 1)
-        : withoutDrag.length;
-      withoutDrag.splice(insertAt, 0, dragMoved);
-
-      const zMap = new Map<string, number>();
-      withoutDrag.forEach((obj, idx) => zMap.set(obj.id, idx));
-
-      if (sourceLayerId !== targetLayerId) {
-        updated
-          .filter(obj => (obj.layerId ?? DEFAULT_LAYER_ID) === sourceLayerId)
-          .sort((a, b) => a.zIndex - b.zIndex)
-          .forEach((obj, idx) => zMap.set(obj.id, idx));
+      if (isLayerObject(dragged)) {
+        // The default layer is the permanent root; layers only nest under
+        // other layers.
+        if (dragId === DEFAULT_LAYER_ID && parentId) return prev;
+        if (parent && !isLayerObject(parent)) return prev;
+      } else if (!parentId) {
+        // Non-layer objects always live under a layer or another object.
+        return prev;
       }
 
-      updated = updated.map(obj => (
-        zMap.has(obj.id) ? { ...obj, zIndex: zMap.get(obj.id)! } : obj
-      ));
+      const updated = prev.map(obj => (obj.id === dragId ? { ...obj, parentId } : obj));
 
-      return normalizeStackOrder(updated);
+      // Splice the dragged node into its new sibling group at the position
+      // the drop describes, then re-densify zIndex everywhere.
+      const siblings = updated
+        .filter(obj => obj.id !== dragId && sameParent(obj.parentId, parentId))
+        .sort((a, b) => a.zIndex - b.zIndex);
+      let insertAt: number;
+      if (placement === 'inside') {
+        insertAt = 0;
+      } else {
+        const targetIndex = siblings.findIndex(obj => obj.id === targetId);
+        insertAt = targetIndex >= 0
+          ? (placement === 'before' ? targetIndex : targetIndex + 1)
+          : siblings.length;
+      }
+      const draggedUpdated = updated.find(obj => obj.id === dragId)!;
+      siblings.splice(insertAt, 0, draggedUpdated);
+      const zMap = new Map(siblings.map((obj, index) => [obj.id, index]));
+
+      return normalizeSiblingOrder(updated.map(obj => (
+        zMap.has(obj.id) ? { ...obj, zIndex: zMap.get(obj.id)! } : obj
+      )));
     });
-    setSelectedIds(new Set([dragObjectId]));
   }, [pushHistory]);
+
+  const reorderObjectByDrop = useCallback((dragObjectId: string, targetObjectId: string, placement: LayerDropPlacement = 'before') => {
+    reorderNodeByDrop(dragObjectId, targetObjectId, placement);
+    setSelectedIds(new Set([dragObjectId]));
+  }, [reorderNodeByDrop]);
+
+  const reorderLayer = useCallback((dragLayerId: string, targetLayerId: string, placement: LayerDropPlacement = 'before') => {
+    reorderNodeByDrop(dragLayerId, targetLayerId, placement);
+  }, [reorderNodeByDrop]);
 
   const renameLayer = useCallback((layerId: string, name: string) => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    const targetLayer = layers.find(layer => layer.id === layerId);
-    if (!targetLayer || targetLayer.name === trimmed) return;
-    setLayersState(prev => prev.map(layer => (
-      layer.id === layerId ? { ...layer, name: trimmed } : layer
+    const targetLayer = objects.find(obj => obj.id === layerId && isLayerObject(obj));
+    if (!targetLayer || targetLayer.label === trimmed) return;
+    pushHistory();
+    setObjects(prev => prev.map(obj => (
+      obj.id === layerId ? { ...obj, label: trimmed } : obj
     )));
-
-    pushHistory();
-    setObjects(prev => normalizeStackOrder(prev.map(obj => (
-      (obj.layerId ?? DEFAULT_LAYER_ID) === layerId
-        ? { ...obj, layerName: trimmed }
-        : obj
-    ))));
-  }, [layers, pushHistory]);
-
-  const reorderLayer = useCallback((dragLayerId: string, targetLayerId: string, placement: LayerDropPlacement = 'before') => {
-    const reordered = reorderLayersByDrop(layers, dragLayerId, targetLayerId, placement, DEFAULT_LAYER_ID);
-    if (!reordered) return;
-    const orderMap = new Map<string, number>(reordered.map(layer => [layer.id, layer.order]));
-
-    // layersState (via `reordered`) already carries the correct parentId for
-    // every layer involved; objects only need their layerOrder refreshed so
-    // stacking stays in sync with the new sibling order.
-    setLayersState(reordered);
-
-    pushHistory();
-    setObjects(prev => normalizeStackOrder(prev.map(obj => ({
-      ...obj,
-      layerOrder: orderMap.get(obj.layerId ?? DEFAULT_LAYER_ID) ?? (obj.layerOrder ?? 0),
-    })), orderMap));
-  }, [layers, pushHistory]);
+  }, [objects, pushHistory]);
 
   const setLayerParent = useCallback((layerId: string, parentId?: string) => {
-    if (layerId === DEFAULT_LAYER_ID || layerId === parentId) return;
-    const byId = new Map(layers.map(layer => [layer.id, layer]));
-    if (!byId.has(layerId) || (parentId && !byId.has(parentId))) return;
-
-    let ancestorId = parentId;
-    while (ancestorId) {
-      if (ancestorId === layerId) return;
-      ancestorId = byId.get(ancestorId)?.parentId;
+    if (layerId === DEFAULT_LAYER_ID) return;
+    const current = objects.find(obj => obj.id === layerId && isLayerObject(obj));
+    if (!current || sameParent(current.parentId, parentId)) return;
+    if (parentId) {
+      const parent = objects.find(obj => obj.id === parentId);
+      if (!parent || !isLayerObject(parent)) return;
     }
+    if (!canReparentObject(objects, layerId, parentId)) return;
 
-    const current = byId.get(layerId);
-    if (current?.parentId === parentId) return;
-    // Hierarchy lives solely in layersState now; objects don't need touching.
-    setLayersState(prev => prev.map(layer => (
-      layer.id === layerId ? { ...layer, parentId } : layer
-    )));
     pushHistory();
-  }, [layers, pushHistory]);
+    setObjects(prev => normalizeSiblingOrder(prev.map(obj => (
+      obj.id === layerId ? { ...obj, parentId } : obj
+    ))));
+  }, [objects, pushHistory]);
 
-  // Deletes a layer explicitly (layers are first-class state now — nothing
-  // auto-deletes an empty layer, so this is the only way one goes away).
-  // Anything that referenced this layer is re-parented one level up instead
-  // of being orphaned:
-  //  - child layers (parentId === layerId) adopt this layer's own parent
-  //  - objects still on this layer move to this layer's parent (or the
-  //    default root layer if this layer had none)
+  // Deletes a layer explicitly (nothing auto-deletes an empty layer, so this
+  // is the only way one goes away). Children re-parent one level up instead
+  // of being orphaned — same rule as any object deletion — except that a
+  // non-layer child never lands at the root: it falls back to the default
+  // layer when the deleted layer had no parent.
   const deleteLayer = useCallback((layerId: string) => {
     if (layerId === DEFAULT_LAYER_ID) return;
-    const target = layers.find(layer => layer.id === layerId);
+    const target = objects.find(obj => obj.id === layerId && isLayerObject(obj));
     if (!target) return;
 
-    const fallbackParentId = target.parentId;
-    const fallbackLayer = layers.find(layer => layer.id === fallbackParentId);
-    const fallbackLayerId = fallbackLayer?.id ?? DEFAULT_LAYER_ID;
-    const fallbackLayerName = fallbackLayer?.name ?? DEFAULT_LAYER_NAME;
-    const fallbackLayerOrder = fallbackLayer?.order ?? 0;
-
     pushHistory();
-    setLayersState(prev => reparentChildrenOnDelete(prev, layerId));
-    setObjects(prev => normalizeStackOrder(prev.map(obj => (
-      (obj.layerId ?? DEFAULT_LAYER_ID) === layerId
-        ? { ...obj, layerId: fallbackLayerId, layerName: fallbackLayerName, layerOrder: fallbackLayerOrder }
-        : obj
-    ))));
-  }, [layers, pushHistory]);
+    setObjects(prev => normalizeSiblingOrder(
+      removeObjectsAndReparentChildren(prev, new Set([layerId])).map(obj => (
+        !isLayerObject(obj) && !obj.parentId
+          ? { ...obj, parentId: DEFAULT_LAYER_ID }
+          : obj
+      )),
+    ));
+  }, [objects, pushHistory]);
 
+  // Moves the selection's layer (the nearest layer ancestor of the topmost
+  // selected object) within its sibling group, which is what decides its
+  // slot in the depth-first paint order.
   const arrangeSelectionLayer = useCallback((mode: 'toFront' | 'forward' | 'backward' | 'toBack') => {
-    if (selectedIds.size === 0) return;
-    const selected = objects.filter(obj => selectedIds.has(obj.id)).sort(compareObjectsByStackOrder);
-    if (selected.length === 0) return;
-    const selectedLayerId = selected[0].layerId ?? DEFAULT_LAYER_ID;
-    const orderedLayers = [...layers].sort((a, b) => a.order - b.order);
-    const index = orderedLayers.findIndex(layer => layer.id === selectedLayerId);
+    if (selectedObjects.length === 0) return;
+    const layerId = findLayerAncestorId(objects, selectedObjects[0].id) ?? DEFAULT_LAYER_ID;
+    const layerNode = objects.find(obj => obj.id === layerId);
+    if (!layerNode) return;
+
+    const siblings = objects
+      .filter(obj => sameParent(obj.parentId, layerNode.parentId))
+      .sort((a, b) => a.zIndex - b.zIndex);
+    const index = siblings.findIndex(obj => obj.id === layerId);
     if (index < 0) return;
 
     let targetIndex = index;
-    if (mode === 'toFront') targetIndex = orderedLayers.length - 1;
+    if (mode === 'toFront') targetIndex = siblings.length - 1;
     if (mode === 'toBack') targetIndex = 0;
-    if (mode === 'forward') targetIndex = Math.min(orderedLayers.length - 1, index + 1);
+    if (mode === 'forward') targetIndex = Math.min(siblings.length - 1, index + 1);
     if (mode === 'backward') targetIndex = Math.max(0, index - 1);
     if (targetIndex === index) return;
 
-    const reordered = [...orderedLayers];
+    const reordered = [...siblings];
     const [moved] = reordered.splice(index, 1);
     reordered.splice(targetIndex, 0, moved);
-    const orderMap = new Map<string, number>(reordered.map((layer, order) => [layer.id, order]));
-    setLayersState(prev => prev.map(layer => ({
-      ...layer,
-      order: orderMap.get(layer.id) ?? layer.order,
-    })));
+    const zMap = new Map(reordered.map((obj, order) => [obj.id, order]));
 
     pushHistory();
-    setObjects(prev => normalizeStackOrder(prev.map(obj => ({
-      ...obj,
-      layerOrder: orderMap.get(obj.layerId ?? DEFAULT_LAYER_ID) ?? (obj.layerOrder ?? 0),
-    }))));
-  }, [layers, objects, pushHistory, selectedIds]);
+    setObjects(prev => normalizeSiblingOrder(prev.map(obj => (
+      zMap.has(obj.id) ? { ...obj, zIndex: zMap.get(obj.id)! } : obj
+    ))));
+  }, [objects, pushHistory, selectedObjects]);
 
   const repositionSelection = useCallback((deltas: Map<string, Position>) => {
     if (deltas.size === 0) return;
     pushHistory();
-    setObjects(prev => normalizeStackOrder(syncConnectorLines(prev.map(obj => {
+    setObjects(prev => normalizeSiblingOrder(syncConnectorLines(prev.map(obj => {
       const delta = deltas.get(obj.id);
       if (!delta || (delta.col === 0 && delta.row === 0)) return obj;
       const moved = {
@@ -1622,30 +1457,13 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
   }, [repositionSelection, selectedObjects]);
 
   // --- Load objects (for share URL / project file) ---
-  // `savedLayers` is the persisted layersState from a project file/share URL
-  // saved by a build that already writes it. When it's absent — a legacy
-  // share-URL payload, or a project file saved before layer hierarchy was
-  // persisted separately — layer names/order/hierarchy are reconstructed
-  // from the objects as before, migrating hierarchy once from the legacy
-  // per-object `layerParentId` field if the raw data still has it.
-  //
-  // `savedLayers` is also the only way an *empty* layer (objectCount 0)
-  // survives a round trip: `buildLayers` only sees layers that own at least
-  // one object, so any layer ids present solely in `savedLayers` are merged
-  // in here explicitly rather than being silently dropped.
+  // Every supported payload shape — unified v2, v1 objects+layers, legacy
+  // bare arrays with per-object layerId/layerParentId — funnels through
+  // migrateToUnifiedTree here, so the runtime only ever sees the single-tree
+  // model with valid, acyclic parents and a guaranteed default layer.
   const loadObjects = useCallback((objs: CanvasObject[], savedLayers?: CanvasLayer[]) => {
-    // Drop dangling/cyclic object parentIds from loaded payloads (legacy
-    // files simply have none) so the runtime hierarchy is always valid.
-    const normalized = normalizeStackOrder(syncConnectorLines(sanitizeObjectParents(objs)));
-    setObjects(normalized);
-
-    const loadedLayers = resolveIncomingLayers(objs, normalized, savedLayers);
-
-    setLayersState(
-      loadedLayers.length > 0
-        ? loadedLayers
-        : [{ id: DEFAULT_LAYER_ID, name: DEFAULT_LAYER_NAME, order: 0, objectCount: 0 }]
-    );
+    const unified = migrateToUnifiedTree(objs, savedLayers);
+    setObjects(normalizeSiblingOrder(syncConnectorLines(unified)));
     setSelectedIds(new Set());
     setPast([]);
     setFuture([]);
@@ -1654,40 +1472,30 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
   }, [syncConnectorLines]);
 
   // --- Add objects (additive/merge load) ---
-  // Same source data as loadObjects (a project file's objects + optional
-  // layers) but merges into the current canvas instead of replacing it.
-  // Loaded ids that collide with ids already on the canvas are regenerated,
-  // and every reference to the old id (object parentId/layerId, connector
-  // bindings, layer parentId) is rewritten to follow — see
-  // remapObjectsAndLayersForAdditiveLoad. Goes through pushHistory like any
-  // other mutation so the whole merge undoes in one step.
+  // Same source data as loadObjects but merges into the current canvas
+  // instead of replacing it. Loaded ids that collide with ids already on the
+  // canvas are regenerated — including layer nodes, so an incoming 'layer-1'
+  // coexists as a separate layer next to the canvas's own default layer —
+  // and every reference (parentId, connector bindings) is rewritten to
+  // follow. Goes through pushHistory like any other mutation so the whole
+  // merge undoes in one step.
   const addObjects = useCallback((objs: CanvasObject[], savedLayers?: CanvasLayer[]) => {
-    const sanitized = sanitizeObjectParents(objs);
-    const incomingLayers = resolveIncomingLayers(objs, sanitized, savedLayers);
+    const unified = migrateToUnifiedTree(objs, savedLayers);
+    // Migration always guarantees a default-layer node; when the incoming
+    // payload has nothing actually on it, merging it in would add a junk
+    // empty "Layer 1" copy every time.
+    const defaultLayerUsed = unified.some(obj => obj.parentId === DEFAULT_LAYER_ID);
+    const incoming = defaultLayerUsed ? unified : unified.filter(obj => obj.id !== DEFAULT_LAYER_ID);
+    if (incoming.length === 0) return;
 
-    const existingObjectIds = new Set(objects.map(obj => obj.id));
-    const existingLayerIds = new Set(layersState.map(layer => layer.id));
-
-    const { objects: remappedObjects, layers: remappedLayers } = remapObjectsAndLayersForAdditiveLoad(
-      sanitized,
-      incomingLayers,
-      existingObjectIds,
-      existingLayerIds,
-      generateId,
-    );
+    const existingIds = new Set(objects.map(obj => obj.id));
+    const remapped = remapObjectsForAdditiveLoad(incoming, existingIds, generateId);
 
     pushHistory();
-    setObjects(prev => normalizeStackOrder(syncConnectorLines([...prev, ...remappedObjects])));
-    setLayersState(prev => {
-      const baseOrder = prev.length > 0 ? Math.max(...prev.map(layer => layer.order)) + 1 : 0;
-      return [
-        ...prev,
-        ...remappedLayers.map((layer, index) => ({ ...layer, order: baseOrder + index })),
-      ];
-    });
+    setObjects(prev => normalizeSiblingOrder(syncConnectorLines([...prev, ...remapped])));
     // Select the newly merged content so it's obvious what the load added.
-    setSelectedIds(new Set(remappedObjects.map(obj => obj.id)));
-  }, [objects, layersState, pushHistory, syncConnectorLines]);
+    setSelectedIds(new Set(remapped.filter(obj => !isLayerObject(obj)).map(obj => obj.id)));
+  }, [objects, pushHistory, syncConnectorLines]);
 
   const handleCellMouseDown = useCallback((
     col: number,
@@ -1736,7 +1544,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       ensureSpace(col + 50, row + 30);
       pushHistory();
       const newObj = createDefaultObject('component', col, row, { componentType: pendingComponent, zIndex: objects.length });
-      setObjects(prev => normalizeStackOrder([...prev, newObj]));
+      setObjects(prev => normalizeSiblingOrder([...prev, newObj]));
       setSelectedIds(new Set([newObj.id]));
       setPendingComponent(null);
       setTool(TOOLS.SELECT);
@@ -1787,12 +1595,10 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
           width: 1,
           height: 1,
           zIndex: objects.length,
-          layerId: DEFAULT_LAYER_ID,
-          layerName: DEFAULT_LAYER_NAME,
-          layerOrder: 0,
+          parentId: DEFAULT_LAYER_ID,
           points: [{ col, row }],
         };
-        setObjects(prev => normalizeStackOrder([...prev, newObj]));
+        setObjects(prev => normalizeSiblingOrder([...prev, newObj]));
         setSelectedIds(new Set([newObj.id]));
         setDragState({ type: 'drawing', startCol: col, startRow: row, tool, drawingObjectId: newObj.id });
         return;
@@ -1821,7 +1627,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       pushHistory();
       const newObj = createDefaultObject('text', col, row, { zIndex: objects.length, content: '' });
       flushSync(() => {
-        setObjects(prev => normalizeStackOrder([...prev, newObj]));
+        setObjects(prev => normalizeSiblingOrder([...prev, newObj]));
         setSelectedIds(new Set([newObj.id]));
       });
       setEditingObjectId(newObj.id);
@@ -1867,7 +1673,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       const clampedDeltaCol = Math.max(limits.minDeltaCol, Math.min(limits.maxDeltaCol, rawDeltaCol));
       const clampedDeltaRow = Math.max(limits.minDeltaRow, Math.min(limits.maxDeltaRow, rawDeltaRow));
 
-      setObjects(prev => normalizeStackOrder(syncConnectorLines(prev.map(obj => {
+      setObjects(prev => normalizeSiblingOrder(syncConnectorLines(prev.map(obj => {
         if (!selectedIds.has(obj.id) || !isGroupResizableObject(obj)) return obj;
         const base = baseById.get(obj.id);
         if (!base) return obj;
@@ -1877,7 +1683,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     }
 
     if (dragState.type === 'drawing' && dragState.tool === TOOLS.PENCIL && dragState.drawingObjectId) {
-      setObjects(prev => normalizeStackOrder(prev.map(obj => {
+      setObjects(prev => normalizeSiblingOrder(prev.map(obj => {
         if (obj.id !== dragState.drawingObjectId || obj.type !== 'pencil') return obj;
         const existing = obj.points || [];
         const last = existing[existing.length - 1] || { col: dragState.startCol, row: dragState.startRow };
@@ -1986,10 +1792,10 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
           return { ...obj, position: { col: nextCol, row: nextRow } };
         });
 
-        return normalizeStackOrder(syncConnectorLines(moved));
+        return normalizeSiblingOrder(syncConnectorLines(moved));
       });
     } else if (dragState.type === 'resizing' && dragState.objectId) {
-      setObjects(prev => normalizeStackOrder(syncConnectorLines(prev.map(obj => {
+      setObjects(prev => normalizeSiblingOrder(syncConnectorLines(prev.map(obj => {
         if (obj.id !== dragState.objectId) return obj;
 
         // Skip text objects
@@ -2201,6 +2007,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       if (maxCol - minCol > 1 || maxRow - minRow > 1) {
         const hitIds = new Set<string>();
         for (const obj of objects) {
+          if (isLayerObject(obj)) continue;
           const bbox = getBoundingBox(obj);
           // Check if object bounding box intersects with marquee
           const objRight = bbox.col + bbox.width;
@@ -2234,7 +2041,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
         const newObj = createDefaultObject('box', col, row, { zIndex: objects.length });
         newObj.width = width;
         newObj.height = height;
-        setObjects(prev => normalizeStackOrder([...prev, newObj]));
+        setObjects(prev => normalizeSiblingOrder([...prev, newObj]));
         setSelectedIds(new Set([newObj.id]));
         setTool(TOOLS.SELECT);
       } else if (tool === TOOLS.LINE && isValidLine) {
@@ -2244,7 +2051,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
         newObj.endPosition = { col: endCol, row: endRow };
         newObj.width = Math.abs(endCol - startCol) + 1;
         newObj.height = Math.abs(endRow - startRow) + 1;
-        setObjects(prev => normalizeStackOrder([...prev, newObj]));
+        setObjects(prev => normalizeSiblingOrder([...prev, newObj]));
         setSelectedIds(new Set([newObj.id]));
         setTool(TOOLS.SELECT);
       } else if (tool === TOOLS.ARROW && isValidLine) {
@@ -2254,7 +2061,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
         newObj.endPosition = { col: endCol, row: endRow };
         newObj.width = Math.abs(endCol - startCol) + 1;
         newObj.height = Math.abs(endRow - startRow) + 1;
-        setObjects(prev => normalizeStackOrder([...prev, newObj]));
+        setObjects(prev => normalizeSiblingOrder([...prev, newObj]));
         setSelectedIds(new Set([newObj.id]));
         setTool(TOOLS.SELECT);
       } else if (tool === TOOLS.CONNECTOR && connectorStartAnchor) {
@@ -2271,7 +2078,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
           newObj.endPosition = { col: endAnchor.position.col, row: endAnchor.position.row };
           newObj.width = Math.abs(endAnchor.position.col - startCol) + 1;
           newObj.height = Math.abs(endAnchor.position.row - startRow) + 1;
-          setObjects(prev => normalizeStackOrder(syncConnectorLines([...prev, newObj])));
+          setObjects(prev => normalizeSiblingOrder(syncConnectorLines([...prev, newObj])));
           setSelectedIds(new Set([newObj.id]));
           setTool(TOOLS.SELECT);
         }
