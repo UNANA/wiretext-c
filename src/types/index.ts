@@ -72,6 +72,11 @@ export interface CanvasObject {
   width: number;
   height: number;
   zIndex: number;
+  // Parent object for object-level nesting (mirrors CanvasLayer.parentId).
+  // Moving a parent moves its descendants by the same delta; deleting a
+  // parent re-parents children to the parent's own parent. Persisted with
+  // the object in project files and share URLs; absent in legacy payloads.
+  parentId?: string;
   layerId?: string;
   layerName?: string;
   layerOrder?: number;

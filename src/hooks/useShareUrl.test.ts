@@ -48,6 +48,18 @@ describe('encodeObjects / decodeObjects round trip', () => {
     expect(decoded?.layers).toBeUndefined();
   });
 
+  it('round-trips object parent hierarchy (parentId travels with each object)', () => {
+    const nested = [
+      { id: 'obj-1', type: 'box', position: { col: 0, row: 0 }, width: 4, height: 2, zIndex: 0 },
+      { id: 'obj-2', type: 'box', position: { col: 2, row: 2 }, width: 4, height: 2, zIndex: 1, parentId: 'obj-1' },
+    ] as unknown as CanvasObject[];
+
+    const url = encodeObjects(nested, layers);
+    const decoded = decodeObjects(url.slice(url.indexOf('#')));
+
+    expect(decoded?.objects.find(obj => obj.id === 'obj-2')?.parentId).toBe('obj-1');
+  });
+
   it('returns null for an empty or malformed hash', () => {
     expect(decodeObjects('')).toBeNull();
     expect(decodeObjects('#')).toBeNull();

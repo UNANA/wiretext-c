@@ -8,6 +8,7 @@ import {
   setLayerPanelDragPayload,
   type LayerDropPlacement,
 } from '../utils/layerDragDrop';
+import { flattenObjectTree } from '../utils/objectHierarchy';
 
 interface LayersPanelProps {
   layers: CanvasLayer[];
@@ -17,7 +18,7 @@ interface LayersPanelProps {
   onSelectObjects: (ids: string[], addToSelection?: boolean) => void;
   onUpdateObject: (id: string, updates: Partial<CanvasObject>) => void;
   onMoveObjectToLayer: (objectId: string, layerId: string) => void;
-  onReorderObjectByDrop: (dragObjectId: string, targetObjectId: string) => void;
+  onReorderObjectByDrop: (dragObjectId: string, targetObjectId: string, placement?: LayerDropPlacement) => void;
   onRenameLayer: (layerId: string, name: string) => void;
   onReorderLayer: (dragLayerId: string, targetLayerId: string, placement?: LayerDropPlacement) => void;
   onSetLayerParent: (layerId: string, parentId?: string) => void;
@@ -126,11 +127,16 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
 
     return flattened.map((layer) => ({
         ...layer,
-        objects: [...(byLayer.get(layer.id) ?? [])].sort(compareObjectsByStackOrder),
+        // Depth-first rows with per-object depth, mirroring the layer tree
+        // indent (objects parented to an object on another layer render at
+        // this layer's root).
+        objects: flattenObjectTree(
+          [...(byLayer.get(layer.id) ?? [])].sort(compareObjectsByStackOrder),
+        ),
       }));
   }, [layers, objects]);
   const visibleObjectIds = useMemo(
-    () => layersWithObjects.flatMap(layer => layer.objects.map(obj => obj.id)),
+    () => layersWithObjects.flatMap(layer => layer.objects.map(row => row.object.id)),
     [layersWithObjects]
   );
   const layerOrderIds = useMemo(
@@ -324,7 +330,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
               )}
             </button>
             <div className="space-y-0.5" style={{ paddingLeft: `${16 + layer.depth * 14}px` }}>
-              {layer.objects.map((obj) => {
+              {layer.objects.map(({ object: obj, depth }) => {
                 const layerIndex = layerOrderIds.indexOf(layer.id);
                 const previousLayerId = layerIndex > 0 ? layerOrderIds[layerIndex - 1] : undefined;
                 const nextLayerId = layerIndex >= 0 && layerIndex < layerOrderIds.length - 1
@@ -340,6 +346,10 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                     e.dataTransfer.dropEffect = 'move';
                     if (draggingObjectIdRef.current && draggingObjectIdRef.current !== obj.id) {
                       setDropTargetObjectId(obj.id);
+                      // Same zones as layer rows: edges reorder as a
+                      // sibling, the middle nests as a child.
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      setDropPlacement(getLayerDropPlacement(e.clientY, rect.top, rect.height));
                     }
                   }}
                   onDrop={(e) => {
@@ -347,7 +357,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                     e.stopPropagation();
                     const payload = getLayerPanelDragPayload(e.dataTransfer);
                     if (payload?.type === 'object' && payload.id !== obj.id) {
-                      onReorderObjectByDrop(payload.id, obj.id);
+                      onReorderObjectByDrop(payload.id, obj.id, dropPlacement);
                     } else if (payload?.type === 'layer') {
                       // Dropping a dragged layer onto an object row (which
                       // takes up most of the panel's vertical space) should
@@ -362,7 +372,10 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                   onDragEnd={finishDrag}
                   onClick={(event) => handleObjectSelection(event, obj.id)}
                   className={`flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs ${selectedIds.has(obj.id) ? 'bg-accent/30 text-text' : 'text-text-dim hover:bg-surface'
-                    } ${dropTargetObjectId === obj.id ? 'ring-1 ring-accent' : ''}`}
+                    } ${dropTargetObjectId === obj.id && dropPlacement === 'inside' ? 'ring-1 ring-accent' : ''}
+                    ${dropTargetObjectId === obj.id && dropPlacement === 'before' ? 'border-t border-accent' : ''}
+                    ${dropTargetObjectId === obj.id && dropPlacement === 'after' ? 'border-b border-accent' : ''}`}
+                  style={{ paddingLeft: `${8 + depth * 14}px` }}
                   title={getObjectTitle(obj)}
                 >
                   <span className="text-[10px] opacity-70">⋮⋮</span>
