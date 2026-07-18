@@ -77,6 +77,7 @@ function App() {
     editingObjectId,
     setEditingObjectId,
     loadObjects,
+    addObjects,
     marquee,
     alignmentGuides,
     panViewport,
@@ -113,6 +114,10 @@ function App() {
   const [fileToast, setFileToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; onSelection: boolean } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Tracks whether the next file picked via fileInputRef should replace the
+  // canvas ("load") or merge into it ("import"); set right before the input
+  // is opened since the change handler fires after the mode is chosen.
+  const loadModeRef = useRef<'replace' | 'merge'>('replace');
 
   // Load objects from URL hash on mount
   useShareUrl(loadObjects);
@@ -173,23 +178,35 @@ function App() {
   }, [objects, layers, showFileToast]);
 
   const handleLoadProject = useCallback(() => {
+    loadModeRef.current = 'replace';
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleImportProject = useCallback(() => {
+    loadModeRef.current = 'merge';
     fileInputRef.current?.click();
   }, []);
 
   const handleProjectFileChange = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
+    const mode = loadModeRef.current;
     event.target.value = '';
     if (!file) return;
 
     try {
       const text = await file.text();
       const { objects: loadedObjects, layers: loadedLayers } = parseProjectFile(text);
-      loadObjects(loadedObjects, loadedLayers);
-      showFileToast('success', `Loaded ${file.name}.`);
+      if (mode === 'merge') {
+        addObjects(loadedObjects, loadedLayers);
+        showFileToast('success', `Imported ${file.name}.`);
+      } else {
+        loadObjects(loadedObjects, loadedLayers);
+        showFileToast('success', `Loaded ${file.name}.`);
+      }
     } catch {
       showFileToast('error', 'Could not load that Wiretext file.');
     }
-  }, [loadObjects, showFileToast]);
+  }, [loadObjects, addObjects, showFileToast]);
 
   const shortcuts: KeyboardShortcut[] = [
     { key: 'b', handler: () => setTool(TOOLS.BOX) },
@@ -230,8 +247,10 @@ function App() {
     { key: 'g', meta: true, shift: true, handler: () => moveSelectionToLayer(DEFAULT_LAYER_ID) },
     { key: 's', ctrl: true, handler: () => handleSaveProject() },
     { key: 'o', ctrl: true, handler: () => handleLoadProject() },
+    { key: 'o', ctrl: true, shift: true, handler: () => handleImportProject() },
     { key: 's', meta: true, handler: () => handleSaveProject() },
     { key: 'o', meta: true, handler: () => handleLoadProject() },
+    { key: 'o', meta: true, shift: true, handler: () => handleImportProject() },
     { key: ']', meta: true, handler: () => arrangeSelectionLayer('toFront') },
     { key: ']', handler: () => arrangeSelectionLayer('forward') },
     { key: '[', handler: () => arrangeSelectionLayer('backward') },
@@ -375,6 +394,7 @@ function App() {
             onClear={clearAll}
             onSave={handleSaveProject}
             onLoad={handleLoadProject}
+            onImport={handleImportProject}
             onExport={handleExport}
             onShare={handleShare}
             onSettings={() => setShowSettingsModal(true)}
