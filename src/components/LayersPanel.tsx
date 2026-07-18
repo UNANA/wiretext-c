@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import type { CanvasLayer, CanvasObject } from '../types';
 import { compareObjectsByStackOrder } from '../utils/boxDrawing';
 import {
+  findPreviousSiblingId,
   getLayerDropPlacement,
   getLayerPanelDragPayload,
   setLayerPanelDragPayload,
@@ -21,6 +22,7 @@ interface LayersPanelProps {
   onRenameLayer: (layerId: string, name: string) => void;
   onReorderLayer: (dragLayerId: string, targetLayerId: string, placement?: LayerDropPlacement) => void;
   onSetLayerParent: (layerId: string, parentId?: string) => void;
+  onDeleteLayer: (layerId: string) => void;
   onCreateLayerFromSelection: () => void;
   onArrangeSelectionLayer: (mode: 'toFront' | 'forward' | 'backward' | 'toBack') => void;
 }
@@ -55,6 +57,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
   onRenameLayer,
   onReorderLayer,
   onSetLayerParent,
+  onDeleteLayer,
   onCreateLayerFromSelection,
   onArrangeSelectionLayer,
 }) => {
@@ -299,11 +302,21 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                     title="Indent under previous layer"
                     className="px-0.5 hover:text-text"
                     onClick={() => {
-                      const index = layersWithObjects.findIndex(item => item.id === layer.id);
-                      const previous = index > 0 ? layersWithObjects[index - 1] : undefined;
-                      if (previous) onSetLayerParent(layer.id, previous.id);
+                      const previousSiblingId = findPreviousSiblingId(layersWithObjects, layer.id);
+                      if (previousSiblingId) onSetLayerParent(layer.id, previousSiblingId);
                     }}
                   >→</span>
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    title={
+                      layer.objectCount > 0
+                        ? 'Delete layer (its objects move up to the parent layer)'
+                        : 'Delete empty layer'
+                    }
+                    className="px-0.5 hover:text-red-400"
+                    onClick={() => onDeleteLayer(layer.id)}
+                  >✕</span>
                 </span>
               )}
             </button>
@@ -326,6 +339,14 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                     const payload = getLayerPanelDragPayload(e.dataTransfer);
                     if (payload?.type === 'object' && payload.id !== obj.id) {
                       onReorderObjectByDrop(payload.id, obj.id);
+                    } else if (payload?.type === 'layer') {
+                      // Dropping a dragged layer onto an object row (which
+                      // takes up most of the panel's vertical space) should
+                      // still act as a drop onto the layer that owns this
+                      // object, matching the layer header's own onDrop —
+                      // otherwise the drop is silently swallowed here since
+                      // this handler stops propagation.
+                      onReorderLayer(payload.id, layer.id, dropPlacement);
                     }
                     finishDrag();
                   }}

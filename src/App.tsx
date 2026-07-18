@@ -97,6 +97,7 @@ function App() {
     renameLayer,
     reorderLayer,
     setLayerParent,
+    deleteLayer,
     arrangeSelectionLayer,
     alignSelection,
     distributeSelection,
@@ -137,7 +138,7 @@ function App() {
   }, []);
 
   const handleSaveProject = useCallback(async () => {
-    const projectContents = stringifyProjectFile(objects);
+    const projectContents = stringifyProjectFile(objects, layers);
 
     if ('__TAURI_INTERNALS__' in window) {
       try {
@@ -148,7 +149,11 @@ function App() {
         if (!path) return;
         await writeTextFile(path, projectContents);
         showFileToast('success', `Project saved to ${path}.`);
-      } catch {
+      } catch (error) {
+        // Surface the real error (e.g. a Tauri ACL/permission denial) in the
+        // devtools console instead of swallowing it — the toast alone isn't
+        // enough to diagnose save failures.
+        console.error('Failed to save the Wiretext project:', error);
         showFileToast('error', 'Could not save the Wiretext project.');
       }
       return;
@@ -164,7 +169,7 @@ function App() {
     link.remove();
     URL.revokeObjectURL(url);
     showFileToast('success', 'Project saved.');
-  }, [objects, showFileToast]);
+  }, [objects, layers, showFileToast]);
 
   const handleLoadProject = useCallback(() => {
     fileInputRef.current?.click();
@@ -177,8 +182,8 @@ function App() {
 
     try {
       const text = await file.text();
-      const loadedObjects = parseProjectFile(text);
-      loadObjects(loadedObjects);
+      const { objects: loadedObjects, layers: loadedLayers } = parseProjectFile(text);
+      loadObjects(loadedObjects, loadedLayers);
       showFileToast('success', `Loaded ${file.name}.`);
     } catch {
       showFileToast('error', 'Could not load that Wiretext file.');
@@ -241,12 +246,12 @@ function App() {
   }, []);
 
   const handleShare = useCallback(() => {
-    const url = encodeObjects(objects);
+    const url = encodeObjects(objects, layers);
     navigator.clipboard.writeText(url).then(() => {
       setShareToast(true);
       setTimeout(() => setShareToast(false), 2000);
     });
-  }, [objects]);
+  }, [objects, layers]);
 
   const handleSetPendingComponent = useCallback((type: ComponentType | null) => {
     setPendingComponent(type);
@@ -488,6 +493,7 @@ function App() {
                 onRenameLayer={renameLayer}
                 onReorderLayer={reorderLayer}
                 onSetLayerParent={setLayerParent}
+                onDeleteLayer={deleteLayer}
                 onCreateLayerFromSelection={createLayerFromSelection}
                 onArrangeSelectionLayer={arrangeSelectionLayer}
               />
