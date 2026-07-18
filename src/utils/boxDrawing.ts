@@ -1,8 +1,7 @@
 import type { Grid, BoxStyle, CanvasObject, ComponentType, GridSize, LabelAlign, LabelVerticalAlign } from '../types';
 import { computeLabelPlacement } from './labelLayout';
-
-const DEFAULT_LAYER_ID = 'layer-1';
-const DEFAULT_LAYER_NAME = 'Layer 1';
+import { sortObjectsByStackOrder } from './objectHierarchy';
+import { DEFAULT_LAYER_ID, isLayerObject } from './layerMigration';
 
 // Unicode Box Drawing Characters - exact wire format
 export const i = {
@@ -529,8 +528,9 @@ export function renderObjectsToGrid(objects: CanvasObject[], gridSize: GridSize)
     grid.push(Array(gridSize.cols).fill(' '));
   }
 
-  // Sort by zIndex and render
-  const sortedObjects = [...objects].sort(compareObjectsByStackOrder);
+  // Paint order comes from the whole tree (layer nodes included), but layer
+  // nodes themselves are non-graphic and never drawn.
+  const sortedObjects = sortObjectsByStackOrder(objects).filter(obj => !isLayerObject(obj));
 
   for (const obj of sortedObjects) {
     const { col, row } = obj.position;
@@ -966,9 +966,7 @@ export function createDefaultObject(
     width: 10,
     height: 6,
     zIndex,
-    layerId: DEFAULT_LAYER_ID,
-    layerName: DEFAULT_LAYER_NAME,
-    layerOrder: 0,
+    parentId: DEFAULT_LAYER_ID,
     borderStyle: 'single',
     fill: 'solid'
   };
@@ -1066,7 +1064,8 @@ function isPointOnConnectorPath(path: { col: number; row: number }[], col: numbe
 
 // Hit test - precise detection for different object types (checks topmost by z-index first)
 export function hitTest(objects: CanvasObject[], col: number, row: number): CanvasObject | null {
-  const sorted = [...objects].sort((a, b) => compareObjectsByStackOrder(b, a)); // topmost first
+  // Topmost first; layer nodes are non-graphic and never hit.
+  const sorted = sortObjectsByStackOrder(objects).filter(obj => !isLayerObject(obj)).reverse();
   for (const obj of sorted) {
 
     // Box/Component: Hit within bounding box
@@ -1132,12 +1131,6 @@ export function hitTest(objects: CanvasObject[], col: number, row: number): Canv
     }
   }
   return null;
-}
-
-export function compareObjectsByStackOrder(a: CanvasObject, b: CanvasObject): number {
-  const layerOrderDiff = (a.layerOrder ?? 0) - (b.layerOrder ?? 0);
-  if (layerOrderDiff !== 0) return layerOrderDiff;
-  return a.zIndex - b.zIndex;
 }
 
 // Get resize handle

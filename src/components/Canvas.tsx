@@ -9,7 +9,8 @@ import type {
   AlignmentGuide,
   GroupResizeHandle,
 } from '../types';
-import { compareObjectsByStackOrder, getLineLength, hitTest } from '../utils/boxDrawing';
+import { getLineLength, hitTest } from '../utils/boxDrawing';
+import { buildPaintOrder } from '../utils/objectHierarchy';
 import type { MarqueeState } from '../hooks/useCanvas';
 
 // Helper to get line bounding box for selection display
@@ -305,11 +306,12 @@ const Canvas: React.FC<CanvasProps> = ({
   const gridWidth = gridSize.cols * charWidth;
   const gridHeight = gridSize.rows * lineHeight;
 
-  // Selected objects for rendering selection boxes (sorted by z-index so overlays stack correctly)
+  // Selected objects for rendering selection boxes (sorted by paint order so overlays stack correctly)
   const selectedObjects = useMemo(() => {
+    const order = buildPaintOrder(objects);
     return objects
       .filter(obj => selectedIds.has(obj.id))
-      .sort(compareObjectsByStackOrder);
+      .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
   }, [objects, selectedIds]);
 
   const groupResizeModel = useMemo(() => {
