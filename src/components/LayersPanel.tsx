@@ -16,7 +16,6 @@ interface LayersPanelProps {
   onSelectObject: (id: string, addToSelection?: boolean) => void;
   onSelectObjects: (ids: string[], addToSelection?: boolean) => void;
   onUpdateObject: (id: string, updates: Partial<CanvasObject>) => void;
-  onMoveSelectionToLayer: (layerId: string) => void;
   onMoveObjectToLayer: (objectId: string, layerId: string) => void;
   onReorderObjectByDrop: (dragObjectId: string, targetObjectId: string) => void;
   onRenameLayer: (layerId: string, name: string) => void;
@@ -51,7 +50,6 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
   onSelectObject,
   onSelectObjects,
   onUpdateObject,
-  onMoveSelectionToLayer,
   onMoveObjectToLayer,
   onReorderObjectByDrop,
   onRenameLayer,
@@ -245,7 +243,6 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                 finishDrag();
               }}
               onDragEnd={finishDrag}
-              onClick={() => onMoveSelectionToLayer(layer.id)}
               className={`flex w-full items-center gap-1.5 px-3 py-1 text-left text-xs transition-colors ${activeLayerId === layer.id ? 'bg-accent/20 text-text' : 'text-text-dim hover:bg-surface'
                 } ${dropTargetLayerId === layer.id && dropPlacement === 'inside' ? 'ring-1 ring-accent' : ''}
                 ${dropTargetLayerId === layer.id && dropPlacement === 'before' ? 'border-t border-accent' : ''}

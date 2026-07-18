@@ -487,7 +487,6 @@ function App() {
                 onSelectObject={selectObject}
                 onSelectObjects={selectObjects}
                 onUpdateObject={updateObject}
-                onMoveSelectionToLayer={moveSelectionToLayer}
                 onMoveObjectToLayer={moveObjectToLayer}
                 onReorderObjectByDrop={reorderObjectByDrop}
                 onRenameLayer={renameLayer}
