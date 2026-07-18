@@ -1,7 +1,7 @@
 import type { Grid, BoxStyle, CanvasObject, ComponentType, GridSize, LabelAlign, LabelVerticalAlign } from '../types';
 import { computeLabelPlacement } from './labelLayout';
 import { sortObjectsByStackOrder } from './objectHierarchy';
-import { DEFAULT_LAYER_ID, isLayerObject } from './layerMigration';
+import { isLayerObject } from './layerMigration';
 
 // Unicode Box Drawing Characters - exact wire format
 export const i = {
@@ -954,7 +954,7 @@ export function createDefaultObject(
   type: 'box' | 'text' | 'line' | 'arrow' | 'component',
   col: number,
   row: number,
-  options: { componentType?: ComponentType; zIndex?: number; content?: string } = {}
+  options: { componentType?: ComponentType; zIndex?: number; content?: string; parentId?: string } = {}
 ): CanvasObject {
   const id = generateId();
   const zIndex = options.zIndex || 0;
@@ -966,7 +966,7 @@ export function createDefaultObject(
     width: 10,
     height: 6,
     zIndex,
-    parentId: DEFAULT_LAYER_ID,
+    parentId: options.parentId,
     borderStyle: 'single',
     fill: 'solid'
   };

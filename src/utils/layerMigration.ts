@@ -92,10 +92,7 @@ function stripLegacyFields(obj: RawObject): CanvasObject {
  *    layerParentId for layer nesting.
  *
  * Guarantees on the result:
- *  - a DEFAULT_LAYER_ID layer node always exists, always at the root;
- *  - every non-layer object has a parent (its old layerId, or the default
- *    layer) unless it kept an object parent;
- *  - layer nodes only parent to other layer nodes (violations become root);
+ *  - legacy objects keep their old layer membership;
  *  - parentId references are valid and acyclic (sanitizeObjectParents);
  *  - deprecated layerId/layerName/layerOrder fields are stripped.
  */
@@ -188,31 +185,7 @@ function convertV1ToUnified(
 }
 
 function repairConstraints(nodes: CanvasObject[]): CanvasObject[] {
-  const withDefault = nodes.some(node => node.id === DEFAULT_LAYER_ID && isLayerObject(node))
-    ? nodes
-    : [createLayerObject(DEFAULT_LAYER_ID, DEFAULT_LAYER_NAME), ...nodes];
-
-  const byId = new Map(withDefault.map(node => [node.id, node]));
-  const constrained = withDefault.map(node => {
-    // The default layer is the permanent root: never nested.
-    if (node.id === DEFAULT_LAYER_ID) {
-      return node.parentId ? { ...node, parentId: undefined } : node;
-    }
-    // Layers may only nest under other layers.
-    if (isLayerObject(node) && node.parentId) {
-      const parent = byId.get(node.parentId);
-      if (!parent || !isLayerObject(parent)) return { ...node, parentId: undefined };
-    }
-    return node;
-  });
-
-  const sanitized = sanitizeObjectParents(constrained);
-
-  // Non-layer objects never float at the root; anything sanitation detached
-  // falls back to the default layer.
-  return sanitized.map(node => (
-    !isLayerObject(node) && !node.parentId
-      ? { ...node, parentId: DEFAULT_LAYER_ID }
-      : node
-  ));
+  // Layers and graphic objects share one unrestricted tree. Only dangling
+  // references and cycles need repair; root graphic objects are valid.
+  return sanitizeObjectParents(nodes);
 }

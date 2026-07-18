@@ -162,7 +162,7 @@ describe('migrateToUnifiedTree', () => {
     expect(byIdOf(result).has('stale')).toBe(false);
   });
 
-  it('repairs constraint violations: nested default layer, layer under a non-layer, dangling parents', () => {
+  it('allows layer-1 nesting, layers under objects, and root objects while repairing dangling parents', () => {
     const broken = [
       { ...createLayerObject(DEFAULT_LAYER_ID, DEFAULT_LAYER_NAME), parentId: 'layer-x' },
       createLayerObject('layer-x', 'X', { parentId: 'a' }),
@@ -172,9 +172,9 @@ describe('migrateToUnifiedTree', () => {
     const result = migrateToUnifiedTree(broken);
     const byId = byIdOf(result);
 
-    expect(byId.get(DEFAULT_LAYER_ID)!.parentId).toBeUndefined();
-    expect(byId.get('layer-x')!.parentId).toBeUndefined();
-    expect(byId.get('a')!.parentId).toBe(DEFAULT_LAYER_ID);
+    expect(byId.get(DEFAULT_LAYER_ID)!.parentId).toBe('layer-x');
+    expect(byId.get('layer-x')!.parentId).toBe('a');
+    expect(byId.get('a')!.parentId).toBeUndefined();
   });
 
   it('orders siblings within a layer as objects-first-then-sublayers, preserving old paint order', () => {

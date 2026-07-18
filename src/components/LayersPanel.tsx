@@ -182,20 +182,10 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
       return;
     }
     if (payload.type === 'object') {
-      if (isLayerObject(node)) {
-        onMoveObjectToLayer(payload.id, node.id);
-      } else {
-        onReorderObjectByDrop(payload.id, node.id, dropPlacement);
-      }
+      if (isLayerObject(node)) onMoveObjectToLayer(payload.id, node.id);
+      else onReorderObjectByDrop(payload.id, node.id, dropPlacement);
     } else {
-      // A layer dropped onto an object row acts on the layer that owns the
-      // object, so drops anywhere in a layer's block behave consistently.
-      const targetLayerId = isLayerObject(node)
-        ? node.id
-        : findLayerAncestorId(objects, node.id) ?? DEFAULT_LAYER_ID;
-      if (targetLayerId !== payload.id) {
-        onReorderLayer(payload.id, targetLayerId, isLayerObject(node) ? dropPlacement : 'after');
-      }
+      onReorderLayer(payload.id, node.id, dropPlacement);
     }
     finishDrag();
   };
@@ -254,8 +244,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
           </span>
         )}
         <span className="text-[10px] opacity-70">{objectCountByLayer.get(layer.id) ?? 0}</span>
-        {layer.id !== DEFAULT_LAYER_ID && (
-          <span className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
+        <span className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
             <span
               role="button"
               tabIndex={0}
@@ -287,8 +276,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
               className="px-0.5 hover:text-red-400"
               onClick={() => onDeleteLayer(layer.id)}
             >✕</span>
-          </span>
-        )}
+        </span>
       </button>
     );
   };

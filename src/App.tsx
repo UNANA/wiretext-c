@@ -14,7 +14,6 @@ import ExportModal from './components/ExportModal';
 import SettingsModal from './components/SettingsModal';
 import AboutModal from './components/AboutModal';
 import { getDefaultProjectFilename, parseProjectFile, stringifyProjectFile } from './utils/projectFile';
-import { DEFAULT_LAYER_ID, findLayerAncestorId } from './utils/layerMigration';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
 import type { KeyboardShortcut, ComponentType } from './types';
@@ -122,10 +121,9 @@ function App() {
   useShareUrl(loadObjects);
 
   // Keyboard shortcuts
-  const canGroupSelection = selectedIds.size > 1
-    && selectedObjects.every(obj => (findLayerAncestorId(objects, obj.id) ?? DEFAULT_LAYER_ID) === DEFAULT_LAYER_ID);
+  const canGroupSelection = selectedIds.size > 1;
   const canUngroupSelection = selectedIds.size > 0
-    && selectedObjects.every(obj => (findLayerAncestorId(objects, obj.id) ?? DEFAULT_LAYER_ID) !== DEFAULT_LAYER_ID);
+    && selectedObjects.every(obj => obj.parentId !== undefined);
 
   const groupOrUngroupSelection = useCallback(() => {
     if (canGroupSelection) {
@@ -133,7 +131,7 @@ function App() {
       return;
     }
     if (canUngroupSelection) {
-      moveSelectionToLayer(DEFAULT_LAYER_ID);
+      moveSelectionToLayer();
     }
   }, [canGroupSelection, canUngroupSelection, createLayerFromSelection, moveSelectionToLayer]);
 
@@ -236,14 +234,14 @@ function App() {
     { key: 'd', ctrl: true, handler: () => duplicateSelection() },
     { key: 'a', ctrl: true, handler: () => selectAll() },
     { key: 'g', ctrl: true, handler: () => groupOrUngroupSelection() },
-    { key: 'g', ctrl: true, shift: true, handler: () => moveSelectionToLayer(DEFAULT_LAYER_ID) },
+    { key: 'g', ctrl: true, shift: true, handler: () => moveSelectionToLayer() },
     { key: 'c', meta: true, handler: () => copySelection() },
     { key: 'x', meta: true, handler: () => cutSelection() },
     { key: 'v', meta: true, handler: () => pasteClipboard() },
     { key: 'd', meta: true, handler: () => duplicateSelection() },
     { key: 'a', meta: true, handler: () => selectAll() },
     { key: 'g', meta: true, handler: () => groupOrUngroupSelection() },
-    { key: 'g', meta: true, shift: true, handler: () => moveSelectionToLayer(DEFAULT_LAYER_ID) },
+    { key: 'g', meta: true, shift: true, handler: () => moveSelectionToLayer() },
     { key: 's', ctrl: true, handler: () => handleSaveProject() },
     { key: 'o', ctrl: true, handler: () => handleLoadProject() },
     { key: 'o', ctrl: true, shift: true, handler: () => handleImportProject() },
@@ -297,9 +295,9 @@ function App() {
   }, [contextMenu]);
 
   const selectedMenuItems = useMemo<ContextMenuItem[]>(() => {
-    const groupItem: ContextMenuItem = canUngroupSelection
-      ? { id: 'ungroup', label: 'Ungroup', shortcut: '⌘⇧G', onClick: () => moveSelectionToLayer(DEFAULT_LAYER_ID) }
-      : { id: 'group', label: 'Group Selection', shortcut: '⌘G', onClick: () => createLayerFromSelection() };
+    const groupItem: ContextMenuItem = canGroupSelection || !canUngroupSelection
+      ? { id: 'group', label: 'Group Selection', shortcut: '⌘G', onClick: () => createLayerFromSelection() }
+      : { id: 'ungroup', label: 'Ungroup', shortcut: '⌘⇧G', onClick: () => moveSelectionToLayer() };
 
     return [
       { id: 'copy', label: 'Copy', shortcut: '⌘C', onClick: copySelection },
