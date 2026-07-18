@@ -75,6 +75,7 @@ export interface CanvasObject {
   layerId?: string;
   layerName?: string;
   layerOrder?: number;
+  layerParentId?: string;
 
   // For box/component
   borderStyle?: BoxStyle;
@@ -132,6 +133,7 @@ export interface CanvasLayer {
   name: string;
   order: number;
   objectCount: number;
+  parentId?: string;
 }
 
 export interface GridSize {

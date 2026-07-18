@@ -14,6 +14,7 @@ interface LayersPanelProps {
   onReorderObjectByDrop: (dragObjectId: string, targetObjectId: string) => void;
   onRenameLayer: (layerId: string, name: string) => void;
   onReorderLayer: (dragLayerId: string, targetLayerId: string) => void;
+  onSetLayerParent: (layerId: string, parentId?: string) => void;
   onCreateLayerFromSelection: () => void;
   onArrangeSelectionLayer: (mode: 'toFront' | 'forward' | 'backward' | 'toBack') => void;
 }
@@ -47,6 +48,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
   onReorderObjectByDrop,
   onRenameLayer,
   onReorderLayer,
+  onSetLayerParent,
   onCreateLayerFromSelection,
   onArrangeSelectionLayer,
 }) => {
@@ -68,9 +70,24 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
       byLayer.set(layerId, current);
     }
 
-    return [...layers]
-      .sort((a, b) => a.order - b.order)
-      .map((layer) => ({
+    const ordered = [...layers].sort((a, b) => a.order - b.order);
+    const byParent = new Map<string | undefined, CanvasLayer[]>();
+    for (const layer of ordered) {
+      const parentId = layer.parentId && layers.some(candidate => candidate.id === layer.parentId)
+        ? layer.parentId
+        : undefined;
+      byParent.set(parentId, [...(byParent.get(parentId) ?? []), layer]);
+    }
+    const flattened: Array<CanvasLayer & { depth: number }> = [];
+    const appendChildren = (parentId: string | undefined, depth: number) => {
+      for (const layer of byParent.get(parentId) ?? []) {
+        flattened.push({ ...layer, depth });
+        appendChildren(layer.id, depth + 1);
+      }
+    };
+    appendChildren(undefined, 0);
+
+    return flattened.map((layer) => ({
         ...layer,
         objects: [...(byLayer.get(layer.id) ?? [])].sort(compareObjectsByStackOrder),
       }));
@@ -191,6 +208,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
               onClick={() => onMoveSelectionToLayer(layer.id)}
               className={`flex w-full items-center gap-1.5 px-3 py-1 text-left text-xs transition-colors ${activeLayerId === layer.id ? 'bg-accent/20 text-text' : 'text-text-dim hover:bg-surface'
                 } ${dropTargetLayerId === layer.id ? 'ring-1 ring-accent' : ''}`}
+              style={{ paddingLeft: `${12 + layer.depth * 14}px` }}
             >
               {(draggingLayerId || draggingObjectId) && (
                 <span className="text-[10px] opacity-70">
@@ -227,8 +245,30 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                 </span>
               )}
               <span className="text-[10px] opacity-70">{layer.objectCount}</span>
+              {layer.id !== 'layer-1' && (
+                <span className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    title="Outdent layer"
+                    className="px-0.5 hover:text-text"
+                    onClick={() => onSetLayerParent(layer.id, layers.find(item => item.id === layer.parentId)?.parentId)}
+                  >←</span>
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    title="Indent under previous layer"
+                    className="px-0.5 hover:text-text"
+                    onClick={() => {
+                      const index = layersWithObjects.findIndex(item => item.id === layer.id);
+                      const previous = index > 0 ? layersWithObjects[index - 1] : undefined;
+                      if (previous) onSetLayerParent(layer.id, previous.id);
+                    }}
+                  >→</span>
+                </span>
+              )}
             </button>
-            <div className="space-y-0.5 pl-4">
+            <div className="space-y-0.5" style={{ paddingLeft: `${16 + layer.depth * 14}px` }}>
               {layer.objects.map((obj) => (
                 <button
                   key={obj.id}

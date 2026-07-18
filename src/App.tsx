@@ -96,6 +96,7 @@ function App() {
     reorderObjectByDrop,
     renameLayer,
     reorderLayer,
+    setLayerParent,
     arrangeSelectionLayer,
     alignSelection,
     distributeSelection,
@@ -486,6 +487,7 @@ function App() {
                 onReorderObjectByDrop={reorderObjectByDrop}
                 onRenameLayer={renameLayer}
                 onReorderLayer={reorderLayer}
+                onSetLayerParent={setLayerParent}
                 onCreateLayerFromSelection={createLayerFromSelection}
                 onArrangeSelectionLayer={arrangeSelectionLayer}
               />
