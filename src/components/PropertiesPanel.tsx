@@ -1,5 +1,5 @@
 import React from 'react';
-import type { Tool, Position, BoxStyle, CanvasObject, ConnectorHeadStyle } from '../types';
+import type { Tool, Position, BoxStyle, CanvasObject, ConnectorHeadStyle, LabelAlign, LabelVerticalAlign } from '../types';
 
 interface PropertiesPanelProps {
   tool: Tool;
@@ -27,6 +27,43 @@ const CONNECTOR_HEAD_OPTIONS: { value: ConnectorHeadStyle; label: string }[] = [
   { value: 'line', label: 'Line' },
   { value: 'dot', label: 'Dot' },
 ];
+
+// Objects whose label sits inside a frame and can be repositioned (Issue #11).
+// Text-body objects (text), fixed-layout components (input, modal, ...) and
+// connectors are intentionally excluded.
+const canPositionLabel = (obj: CanvasObject): boolean =>
+  obj.type === 'box' || obj.componentType === 'button';
+
+const V_ALIGNS: LabelVerticalAlign[] = ['top', 'middle', 'bottom'];
+const H_ALIGNS: LabelAlign[] = ['left', 'center', 'right'];
+
+// 3x3 grid selector for label placement (horizontal x vertical).
+const LabelPositionGrid: React.FC<{
+  align: LabelAlign;
+  verticalAlign: LabelVerticalAlign;
+  onChange: (updates: Pick<CanvasObject, 'labelAlign' | 'labelVerticalAlign'>) => void;
+}> = ({ align, verticalAlign, onChange }) => (
+  <div>
+    <label className="block text-2xs text-text-dim mb-1">Label Position</label>
+    <div className="grid grid-cols-3 gap-1 w-fit">
+      {V_ALIGNS.map(v =>
+        H_ALIGNS.map(h => {
+          const active = align === h && verticalAlign === v;
+          return (
+            <button
+              key={`${v}-${h}`}
+              onClick={() => onChange({ labelAlign: h, labelVerticalAlign: v })}
+              title={`${v} ${h}`}
+              className={`w-6 h-6 rounded text-xs transition-colors ${active ? 'bg-accent text-bg' : 'bg-surface-hover text-text-dim hover:text-text'}`}
+            >
+              ·
+            </button>
+          );
+        })
+      )}
+    </div>
+  </div>
+);
 
 const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   tool,
@@ -103,6 +140,7 @@ const MultipleObjectProperties: React.FC<MultipleObjectPropertiesProps> = ({ obj
   const allBordered = objects.every(obj => obj.type === 'box' || obj.type === 'component');
   const allRotatable = objects.every(obj => (obj.type === 'line' && !obj.isConnector) || obj.type === 'arrow');
   const allConnectors = objects.every(obj => obj.type === 'line' && obj.isConnector);
+  const allLabelPositionable = objects.every(canPositionLabel);
   const borderStyle = sharedValue('borderStyle');
   const fill = sharedValue('fill');
   const rotation = sharedValue('rotation');
@@ -159,6 +197,14 @@ const MultipleObjectProperties: React.FC<MultipleObjectPropertiesProps> = ({ obj
             className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
           />
         </div>
+      )}
+
+      {allLabelPositionable && (
+        <LabelPositionGrid
+          align={sharedValue('labelAlign') ?? 'center'}
+          verticalAlign={sharedValue('labelVerticalAlign') ?? 'middle'}
+          onChange={(updates) => onUpdateSelection(updates)}
+        />
       )}
 
       {allConnectors && (
@@ -423,6 +469,15 @@ const SingleObjectProperties: React.FC<SingleObjectPropertiesProps> = ({
             className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
           />
         </div>
+      )}
+
+      {/* Label Position */}
+      {canPositionLabel(obj) && (
+        <LabelPositionGrid
+          align={obj.labelAlign ?? 'center'}
+          verticalAlign={obj.labelVerticalAlign ?? 'middle'}
+          onChange={(updates) => onUpdateObject(obj.id, updates)}
+        />
       )}
 
       {/* Text Content */}

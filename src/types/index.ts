@@ -53,6 +53,9 @@ export type ObjectType =
 
 export type ConnectorHeadStyle = 'arrow' | 'line' | 'dot';
 
+export type LabelAlign = 'left' | 'center' | 'right';
+export type LabelVerticalAlign = 'top' | 'middle' | 'bottom';
+
 export interface Position {
   col: number;
   row: number;
@@ -85,6 +88,10 @@ export interface CanvasObject {
   borderStyle?: BoxStyle;
   fill?: 'solid' | 'transparent';
   label?: string;
+  // Label placement inside box/button. Absent means center/middle, which
+  // matches the historical default; legacy payloads read back unchanged.
+  labelAlign?: LabelAlign;
+  labelVerticalAlign?: LabelVerticalAlign;
 
   // For text
   content?: string;
