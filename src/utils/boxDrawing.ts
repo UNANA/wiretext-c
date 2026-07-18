@@ -1,4 +1,5 @@
-import type { Grid, BoxStyle, CanvasObject, ComponentType, GridSize } from '../types';
+import type { Grid, BoxStyle, CanvasObject, ComponentType, GridSize, LabelAlign, LabelVerticalAlign } from '../types';
+import { computeLabelPlacement } from './labelLayout';
 
 const DEFAULT_LAYER_ID = 'layer-1';
 const DEFAULT_LAYER_NAME = 'Layer 1';
@@ -146,6 +147,25 @@ export function placeCenteredText(grid: Grid, col: number, row: number, width: n
   const displayText = text.length > maxLen ? text.slice(0, maxLen - 1) + '…' : text;
   const startCol = col + Math.floor((width - displayText.length) / 2);
   drawText(grid, startCol, centerRow, displayText);
+}
+
+// Place a label inside a box/button with configurable alignment. Defaults
+// (center/middle) reproduce placeCenteredText, so unset labelPosition keeps
+// the legacy appearance. Positioning logic lives in the pure
+// computeLabelPlacement so it can be unit-tested.
+export function placeLabel(
+  grid: Grid,
+  col: number,
+  row: number,
+  width: number,
+  height: number,
+  text: string,
+  align: LabelAlign = 'center',
+  verticalAlign: LabelVerticalAlign = 'middle',
+): void {
+  if (!text) return;
+  const placement = computeLabelPlacement(col, row, width, height, text, align, verticalAlign);
+  drawText(grid, placement.col, placement.row, placement.text);
 }
 
 // Get diagonal direction (b function)
@@ -519,7 +539,7 @@ export function renderObjectsToGrid(objects: CanvasObject[], gridSize: GridSize)
       case 'box': {
         if (obj.fill !== 'transparent') fillRect(grid, col, row, obj.width, obj.height);
         drawBoxBorder(grid, col, row, obj.width, obj.height, obj.borderStyle || 'single');
-        if (obj.label) placeCenteredText(grid, col, row, obj.width, obj.height, obj.label);
+        if (obj.label) placeLabel(grid, col, row, obj.width, obj.height, obj.label, obj.labelAlign, obj.labelVerticalAlign);
         break;
       }
 
@@ -683,7 +703,7 @@ export function renderObjectsToGrid(objects: CanvasObject[], gridSize: GridSize)
 
         switch (obj.componentType) {
           case 'button':
-            placeCenteredText(grid, compCol, compRow, obj.width, obj.height, obj.label || 'Button');
+            placeLabel(grid, compCol, compRow, obj.width, obj.height, obj.label || 'Button', obj.labelAlign, obj.labelVerticalAlign);
             break;
 
           case 'input': {
