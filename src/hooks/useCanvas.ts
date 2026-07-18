@@ -20,6 +20,13 @@ import {
   migrateLegacyLayerParentIds,
   type LayerDropPlacement,
 } from '../utils/layerDragDrop';
+import {
+  collectObjectDescendants,
+  remapParentIdsForClones,
+  removeObjectsAndReparentChildren,
+  resolveObjectDropParent,
+  sanitizeObjectParents,
+} from '../utils/objectHierarchy';
 import type {
   Grid,
   Tool,
@@ -120,7 +127,7 @@ export interface UseCanvasReturn {
   createLayerFromSelection: () => void;
   moveSelectionToLayer: (layerId: string) => void;
   moveObjectToLayer: (objectId: string, layerId: string) => void;
-  reorderObjectByDrop: (dragObjectId: string, targetObjectId: string) => void;
+  reorderObjectByDrop: (dragObjectId: string, targetObjectId: string, placement?: LayerDropPlacement) => void;
   renameLayer: (layerId: string, name: string) => void;
   reorderLayer: (dragLayerId: string, targetLayerId: string, placement?: LayerDropPlacement) => void;
   setLayerParent: (layerId: string, parentId?: string) => void;
@@ -984,9 +991,11 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     )))));
   }, [pushHistory, selectedIds, syncConnectorLines]);
 
+  // Deleting an object re-parents its children to the deleted object's own
+  // parent (same rule as layer deletion) instead of orphaning them.
   const deleteObject = useCallback((id: string) => {
     pushHistory();
-    setObjects(prev => normalizeStackOrder(prev.filter(obj => obj.id !== id)));
+    setObjects(prev => normalizeStackOrder(removeObjectsAndReparentChildren(prev, new Set([id]))));
     setSelectedIds(prev => {
       const next = new Set(prev);
       next.delete(id);
@@ -997,16 +1006,19 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
   const deleteSelection = useCallback(() => {
     if (selectedIds.size === 0) return;
     pushHistory();
-    setObjects(prev => normalizeStackOrder(prev.filter(obj => !selectedIds.has(obj.id))));
+    setObjects(prev => normalizeStackOrder(removeObjectsAndReparentChildren(prev, selectedIds)));
     setSelectedIds(new Set());
   }, [selectedIds, pushHistory]);
 
   const moveObject = useCallback((id: string, dCol: number, dRow: number) => {
-    setObjects(prev => normalizeStackOrder(syncConnectorLines(prev.map(obj => {
-      if (obj.id !== id) return obj;
-      const target = prev.find(candidate => candidate.id === id);
-      if (!target) return obj;
-      const bounded = clampDeltaForObjects([target], dCol, dRow);
+    setObjects(prev => {
+      // Moving a parent object drags its whole subtree by the same delta.
+      const movingIds = collectObjectDescendants(prev, [id]);
+      const moving = prev.filter(obj => movingIds.has(obj.id));
+      if (moving.length === 0) return prev;
+      const bounded = clampDeltaForObjects(moving, dCol, dRow);
+      return normalizeStackOrder(syncConnectorLines(prev.map(obj => {
+      if (!movingIds.has(obj.id)) return obj;
       const newCol = obj.position.col + bounded.dCol;
       const newRow = obj.position.row + bounded.dRow;
 
@@ -1033,16 +1045,19 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
         };
       }
       return { ...obj, position: { col: newCol, row: newRow } };
-    }))));
+      })));
+    });
   }, [clampDeltaForObjects, ensureSpace, syncConnectorLines]);
 
   const moveSelection = useCallback((dCol: number, dRow: number) => {
     if (selectedIds.size === 0) return;
     setObjects(prev => {
-      const moving = prev.filter(obj => selectedIds.has(obj.id));
+      // Include descendants of selected parents so subtrees follow.
+      const movingIds = collectObjectDescendants(prev, selectedIds);
+      const moving = prev.filter(obj => movingIds.has(obj.id));
       const bounded = clampDeltaForObjects(moving, dCol, dRow);
       return normalizeStackOrder(syncConnectorLines(prev.map(obj => {
-      if (!selectedIds.has(obj.id)) return obj;
+      if (!movingIds.has(obj.id)) return obj;
       const newCol = obj.position.col + bounded.dCol;
       const newRow = obj.position.row + bounded.dRow;
 
@@ -1143,7 +1158,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       const hit = hitTest(prev, col, row);
       if (!hit) return prev;
       removedId = hit.id;
-      return normalizeStackOrder(prev.filter(obj => obj.id !== hit.id));
+      return normalizeStackOrder(removeObjectsAndReparentChildren(prev, new Set([hit.id])));
     });
     if (!removedId) return;
     setSelectedIds(prev => {
@@ -1202,9 +1217,11 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     pushHistory();
 
     const newIds = new Set<string>();
-    const newObjects = clipboard.map(obj => {
+    const idMap = new Map<string, string>();
+    const cloned = clipboard.map(obj => {
       const newId = generateId();
       newIds.add(newId);
+      idMap.set(obj.id, newId);
       const base: CanvasObject = {
         ...obj,
         id: newId,
@@ -1218,6 +1235,9 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       }
       return base;
     });
+    // Keep parent links within the pasted set; detach from parents that
+    // were not copied so pastes don't follow the original parent's moves.
+    const newObjects = remapParentIdsForClones(cloned, idMap);
 
     setObjects(prev => normalizeStackOrder([...prev, ...newObjects]));
     setSelectedIds(newIds);
@@ -1231,9 +1251,11 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
 
     const selected = objects.filter(obj => selectedIds.has(obj.id));
     const newIds = new Set<string>();
-    const duplicated = selected.map(obj => {
+    const idMap = new Map<string, string>();
+    const cloned = selected.map(obj => {
       const newId = generateId();
       newIds.add(newId);
+      idMap.set(obj.id, newId);
       const base: CanvasObject = {
         ...obj,
         id: newId,
@@ -1247,6 +1269,9 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       }
       return base;
     });
+    // Same parent remap rule as paste: keep links inside the duplicated
+    // set, detach clones whose parent was not duplicated.
+    const duplicated = remapParentIdsForClones(cloned, idMap);
 
     setObjects(prev => normalizeStackOrder([...prev, ...duplicated]));
     setSelectedIds(newIds);
@@ -1291,21 +1316,35 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     const targetLayer = layers.find(layer => layer.id === layerId);
     if (!targetLayer) return;
     pushHistory();
-    setObjects(prev => normalizeStackOrder(prev.map(obj => (
-      obj.id === objectId
-        ? { ...obj, layerId: targetLayer.id, layerName: targetLayer.name, layerOrder: targetLayer.order }
-        : obj
-    ))));
+    setObjects(prev => {
+      // Child objects follow their parent between layers so nested rows
+      // stay together in the panel.
+      const movingIds = collectObjectDescendants(prev, [objectId]);
+      // Moving to another layer detaches the object from a parent that
+      // stays behind; its own subtree keeps its internal structure.
+      return normalizeStackOrder(prev.map(obj => {
+        if (!movingIds.has(obj.id)) return obj;
+        const moved = { ...obj, layerId: targetLayer.id, layerName: targetLayer.name, layerOrder: targetLayer.order };
+        return obj.id === objectId ? { ...moved, parentId: undefined } : moved;
+      }));
+    });
     setSelectedIds(new Set([objectId]));
   }, [layers, pushHistory]);
 
-  const reorderObjectByDrop = useCallback((dragObjectId: string, targetObjectId: string) => {
+  // Drop an object onto another object in the layers panel. Placement
+  // mirrors layer drops (reorderLayersByDrop): 'inside' nests the dragged
+  // object as the target's child, 'before'/'after' makes it the target's
+  // sibling. A drop that would create a parent cycle is ignored.
+  const reorderObjectByDrop = useCallback((dragObjectId: string, targetObjectId: string, placement: LayerDropPlacement = 'before') => {
     if (dragObjectId === targetObjectId) return;
     pushHistory();
     setObjects(prev => {
       const dragObj = prev.find(obj => obj.id === dragObjectId);
       const targetObj = prev.find(obj => obj.id === targetObjectId);
       if (!dragObj || !targetObj) return prev;
+
+      const dropParent = resolveObjectDropParent(prev, dragObjectId, targetObj, placement);
+      if (!dropParent.ok) return prev;
 
       const sourceLayerId = dragObj.layerId ?? DEFAULT_LAYER_ID;
       const targetLayerId = targetObj.layerId ?? DEFAULT_LAYER_ID;
@@ -1314,7 +1353,13 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
 
       let updated = prev.map(obj => (
         obj.id === dragObjectId
-          ? { ...obj, layerId: targetLayerId, layerName: targetLayerName, layerOrder: targetLayerOrder }
+          ? {
+              ...obj,
+              parentId: dropParent.parentId,
+              layerId: targetLayerId,
+              layerName: targetLayerName,
+              layerOrder: targetLayerOrder,
+            }
           : obj
       ));
 
@@ -1325,7 +1370,9 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       if (!dragMoved) return prev;
       const withoutDrag = targetLayerObjects.filter(obj => obj.id !== dragObjectId);
       const targetIndex = withoutDrag.findIndex(obj => obj.id === targetObjectId);
-      const insertAt = targetIndex >= 0 ? targetIndex : withoutDrag.length;
+      const insertAt = targetIndex >= 0
+        ? (placement === 'before' ? targetIndex : targetIndex + 1)
+        : withoutDrag.length;
       withoutDrag.splice(insertAt, 0, dragMoved);
 
       const zMap = new Map<string, number>();
@@ -1541,7 +1588,9 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
   // one object, so any layer ids present solely in `savedLayers` are merged
   // in here explicitly rather than being silently dropped.
   const loadObjects = useCallback((objs: CanvasObject[], savedLayers?: CanvasLayer[]) => {
-    const normalized = normalizeStackOrder(syncConnectorLines(objs));
+    // Drop dangling/cyclic object parentIds from loaded payloads (legacy
+    // files simply have none) so the runtime hierarchy is always valid.
+    const normalized = normalizeStackOrder(syncConnectorLines(sanitizeObjectParents(objs)));
     setObjects(normalized);
 
     const reconstructed = buildLayers(normalized);
@@ -1817,7 +1866,11 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
 
       setObjects(prev => {
         const movingSelection = selectedIds.has(dragState.objectId) && selectedIds.size > 1;
-        const movingIds = movingSelection ? selectedIds : new Set([dragState.objectId]);
+        // Descendants of the dragged object(s) follow the same delta.
+        const movingIds = collectObjectDescendants(
+          prev,
+          movingSelection ? selectedIds : [dragState.objectId],
+        );
         const anchor = prev.find(obj => obj.id === dragState.objectId);
         if (!anchor) return prev;
         const anchorBox = getBoundingBox(anchor);
