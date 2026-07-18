@@ -134,7 +134,7 @@ export interface UseCanvasReturn {
   duplicateSelection: () => void;
   selectAll: () => void;
   createLayerFromSelection: () => void;
-  moveSelectionToLayer: (layerId: string) => void;
+  moveSelectionToLayer: (layerId?: string) => void;
   moveObjectToLayer: (objectId: string, layerId: string) => void;
   reorderObjectByDrop: (dragObjectId: string, targetObjectId: string, placement?: LayerDropPlacement) => void;
   renameLayer: (layerId: string, name: string) => void;
@@ -845,6 +845,9 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
   const objectsCount = objects.filter(obj => !isLayerObject(obj)).length;
   const canUndo = past.length > 0;
   const canRedo = future.length > 0;
+  const creationParentId = selectedIds.size === 1
+    ? objects.find(obj => selectedIds.has(obj.id) && !isLayerObject(obj))?.id
+    : undefined;
 
   const addObject = useCallback((obj: Omit<CanvasObject, 'id' | 'zIndex'>): CanvasObject => {
     const maxCol = obj.position.col + obj.width;
@@ -855,12 +858,12 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       ...obj,
       id: generateId(),
       zIndex: objects.length,
-      parentId: obj.parentId ?? DEFAULT_LAYER_ID,
+      parentId: obj.parentId ?? creationParentId,
     };
     pushHistory();
     setObjects(prev => normalizeSiblingOrder([...prev, newObj]));
     return newObj;
-  }, [objects.length, ensureSpace, pushHistory]);
+  }, [objects.length, creationParentId, ensureSpace, pushHistory]);
 
   const updateObject = useCallback((id: string, updates: Partial<CanvasObject>) => {
     setObjects(prev => {
@@ -1042,7 +1045,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
 
   const clearAll = useCallback(() => {
     pushHistory();
-    setObjects([createLayerObject(DEFAULT_LAYER_ID, DEFAULT_LAYER_NAME)]);
+    setObjects([]);
     setSelectedIds(new Set());
     setGridSize({ cols: INITIAL_COLS, rows: INITIAL_ROWS });
   }, [pushHistory]);
@@ -1201,13 +1204,13 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
   }, [objects]);
 
   // Reparents every selection root (selected object whose parent is not
-  // also selected) to `layerId`. Descendants follow their parent through
+  // also selected) to `parentId`. Descendants follow their parent through
   // the tree, so subtrees keep their internal structure.
-  const reparentSelectionRoots = useCallback((prev: CanvasObject[], layerId: string): CanvasObject[] => {
+  const reparentSelectionRoots = useCallback((prev: CanvasObject[], parentId?: string): CanvasObject[] => {
     return normalizeSiblingOrder(prev.map(obj => {
       if (!selectedIds.has(obj.id)) return obj;
       const parentSelected = obj.parentId !== undefined && selectedIds.has(obj.parentId);
-      return parentSelected ? obj : { ...obj, parentId: layerId };
+      return parentSelected ? obj : { ...obj, parentId };
     }));
   }, [selectedIds]);
 
@@ -1222,10 +1225,9 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     });
   }, [pushHistory, reparentSelectionRoots]);
 
-  const moveSelectionToLayer = useCallback((layerId: string) => {
+  const moveSelectionToLayer = useCallback((layerId?: string) => {
     if (selectedIds.size === 0) return;
-    const targetLayer = objects.find(obj => obj.id === layerId && isLayerObject(obj));
-    if (!targetLayer) return;
+    if (layerId && !objects.some(obj => obj.id === layerId && isLayerObject(obj))) return;
     pushHistory();
     setObjects(prev => reparentSelectionRoots(prev, layerId));
   }, [objects, pushHistory, reparentSelectionRoots, selectedIds]);
@@ -1260,18 +1262,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       const dropParent = resolveObjectDropParent(prev, dragId, target, placement);
       if (!dropParent.ok) return prev;
       const parentId = dropParent.parentId;
-      const parent = parentId ? prev.find(obj => obj.id === parentId) : undefined;
-      if (parentId && !parent) return prev;
-
-      if (isLayerObject(dragged)) {
-        // The default layer is the permanent root; layers only nest under
-        // other layers.
-        if (dragId === DEFAULT_LAYER_ID && parentId) return prev;
-        if (parent && !isLayerObject(parent)) return prev;
-      } else if (!parentId) {
-        // Non-layer objects always live under a layer or another object.
-        return prev;
-      }
+      if (parentId && !prev.some(obj => obj.id === parentId)) return prev;
 
       const updated = prev.map(obj => (obj.id === dragId ? { ...obj, parentId } : obj));
 
@@ -1320,12 +1311,11 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
   }, [objects, pushHistory]);
 
   const setLayerParent = useCallback((layerId: string, parentId?: string) => {
-    if (layerId === DEFAULT_LAYER_ID) return;
     const current = objects.find(obj => obj.id === layerId && isLayerObject(obj));
     if (!current || sameParent(current.parentId, parentId)) return;
     if (parentId) {
       const parent = objects.find(obj => obj.id === parentId);
-      if (!parent || !isLayerObject(parent)) return;
+      if (!parent) return;
     }
     if (!canReparentObject(objects, layerId, parentId)) return;
 
@@ -1337,21 +1327,14 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
 
   // Deletes a layer explicitly (nothing auto-deletes an empty layer, so this
   // is the only way one goes away). Children re-parent one level up instead
-  // of being orphaned — same rule as any object deletion — except that a
-  // non-layer child never lands at the root: it falls back to the default
-  // layer when the deleted layer had no parent.
+  // of being orphaned — the same rule as any object deletion.
   const deleteLayer = useCallback((layerId: string) => {
-    if (layerId === DEFAULT_LAYER_ID) return;
     const target = objects.find(obj => obj.id === layerId && isLayerObject(obj));
     if (!target) return;
 
     pushHistory();
     setObjects(prev => normalizeSiblingOrder(
-      removeObjectsAndReparentChildren(prev, new Set([layerId])).map(obj => (
-        !isLayerObject(obj) && !obj.parentId
-          ? { ...obj, parentId: DEFAULT_LAYER_ID }
-          : obj
-      )),
+      removeObjectsAndReparentChildren(prev, new Set([layerId])),
     ));
   }, [objects, pushHistory]);
 
@@ -1543,7 +1526,11 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     if (pendingComponent) {
       ensureSpace(col + 50, row + 30);
       pushHistory();
-      const newObj = createDefaultObject('component', col, row, { componentType: pendingComponent, zIndex: objects.length });
+      const newObj = createDefaultObject('component', col, row, {
+        componentType: pendingComponent,
+        zIndex: objects.length,
+        parentId: creationParentId,
+      });
       setObjects(prev => normalizeSiblingOrder([...prev, newObj]));
       setSelectedIds(new Set([newObj.id]));
       setPendingComponent(null);
@@ -1595,7 +1582,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
           width: 1,
           height: 1,
           zIndex: objects.length,
-          parentId: DEFAULT_LAYER_ID,
+          parentId: creationParentId,
           points: [{ col, row }],
         };
         setObjects(prev => normalizeSiblingOrder([...prev, newObj]));
@@ -1625,7 +1612,11 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     if (tool === TOOLS.TEXT) {
       ensureSpace(col + 20, row + 5);
       pushHistory();
-      const newObj = createDefaultObject('text', col, row, { zIndex: objects.length, content: '' });
+      const newObj = createDefaultObject('text', col, row, {
+        zIndex: objects.length,
+        content: '',
+        parentId: creationParentId,
+      });
       flushSync(() => {
         setObjects(prev => normalizeSiblingOrder([...prev, newObj]));
         setSelectedIds(new Set([newObj.id]));
@@ -1642,6 +1633,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     selectObject,
     clearSelection,
     objects.length,
+    creationParentId,
     ensureSpace,
     pushHistory,
     getConnectorAnchor,
@@ -2038,7 +2030,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       if (tool === TOOLS.BOX && isValidBox) {
         ensureSpace(col + width + EXPAND_MARGIN, row + height + EXPAND_MARGIN);
         pushHistory();
-        const newObj = createDefaultObject('box', col, row, { zIndex: objects.length });
+        const newObj = createDefaultObject('box', col, row, { zIndex: objects.length, parentId: creationParentId });
         newObj.width = width;
         newObj.height = height;
         setObjects(prev => normalizeSiblingOrder([...prev, newObj]));
@@ -2047,7 +2039,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       } else if (tool === TOOLS.LINE && isValidLine) {
         ensureSpace(Math.max(startCol, endCol) + EXPAND_MARGIN, Math.max(startRow, endRow) + EXPAND_MARGIN);
         pushHistory();
-        const newObj = createDefaultObject('line', startCol, startRow, { zIndex: objects.length });
+        const newObj = createDefaultObject('line', startCol, startRow, { zIndex: objects.length, parentId: creationParentId });
         newObj.endPosition = { col: endCol, row: endRow };
         newObj.width = Math.abs(endCol - startCol) + 1;
         newObj.height = Math.abs(endRow - startRow) + 1;
@@ -2057,7 +2049,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
       } else if (tool === TOOLS.ARROW && isValidLine) {
         ensureSpace(Math.max(startCol, endCol) + EXPAND_MARGIN, Math.max(startRow, endRow) + EXPAND_MARGIN);
         pushHistory();
-        const newObj = createDefaultObject('arrow', startCol, startRow, { zIndex: objects.length });
+        const newObj = createDefaultObject('arrow', startCol, startRow, { zIndex: objects.length, parentId: creationParentId });
         newObj.endPosition = { col: endCol, row: endRow };
         newObj.width = Math.abs(endCol - startCol) + 1;
         newObj.height = Math.abs(endRow - startRow) + 1;
@@ -2069,7 +2061,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
         if (endAnchor && (endAnchor.objectId !== connectorStartAnchor.objectId || endAnchor.handle !== connectorStartAnchor.handle)) {
           ensureSpace(Math.max(startCol, endAnchor.position.col) + EXPAND_MARGIN, Math.max(startRow, endAnchor.position.row) + EXPAND_MARGIN);
           pushHistory();
-          const newObj = createDefaultObject('line', startCol, startRow, { zIndex: objects.length });
+          const newObj = createDefaultObject('line', startCol, startRow, { zIndex: objects.length, parentId: creationParentId });
           newObj.isConnector = true;
           newObj.connectorFromHead = 'line';
           newObj.connectorToHead = 'line';
@@ -2088,7 +2080,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     setDragState({ type: 'none' });
     setConnectorStartAnchor(null);
     setAlignmentGuides([]);
-  }, [dragState, cursor, tool, objects, ensureSpace, pushHistory, marquee, connectorStartAnchor, getConnectorAnchor, syncConnectorLines]);
+  }, [dragState, cursor, tool, objects, creationParentId, ensureSpace, pushHistory, marquee, connectorStartAnchor, getConnectorAnchor, syncConnectorLines]);
 
   const handleKeyDown = useCallback((key: string) => {
     if (selectedIds.size > 0) {
