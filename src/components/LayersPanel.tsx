@@ -22,6 +22,7 @@ interface LayersPanelProps {
   onReorderLayer: (dragLayerId: string, targetLayerId: string, placement?: LayerDropPlacement) => void;
   onSetLayerParent: (layerId: string, parentId?: string) => void;
   onDeleteLayer: (layerId: string) => void;
+  onDeleteObject: (objectId: string) => void;
   onCreateLayerFromSelection: () => void;
   onArrangeSelectionLayer: (mode: 'toFront' | 'forward' | 'backward' | 'toBack') => void;
 }
@@ -56,6 +57,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
   onReorderLayer,
   onSetLayerParent,
   onDeleteLayer,
+  onDeleteObject,
   onCreateLayerFromSelection,
   onArrangeSelectionLayer,
 }) => {
@@ -129,6 +131,10 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
   }, [layers, objects]);
   const visibleObjectIds = useMemo(
     () => layersWithObjects.flatMap(layer => layer.objects.map(obj => obj.id)),
+    [layersWithObjects]
+  );
+  const layerOrderIds = useMemo(
+    () => layersWithObjects.map(layer => layer.id),
     [layersWithObjects]
   );
 
@@ -318,7 +324,13 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
               )}
             </button>
             <div className="space-y-0.5" style={{ paddingLeft: `${16 + layer.depth * 14}px` }}>
-              {layer.objects.map((obj) => (
+              {layer.objects.map((obj) => {
+                const layerIndex = layerOrderIds.indexOf(layer.id);
+                const previousLayerId = layerIndex > 0 ? layerOrderIds[layerIndex - 1] : undefined;
+                const nextLayerId = layerIndex >= 0 && layerIndex < layerOrderIds.length - 1
+                  ? layerOrderIds[layerIndex + 1]
+                  : undefined;
+                return (
                 <button
                   key={obj.id}
                   draggable={editingObjectId !== obj.id}
@@ -383,8 +395,36 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                       {getObjectTitle(obj)}
                     </span>
                   )}
+                  <span className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      title="Move to layer above"
+                      className={`px-0.5 ${previousLayerId ? 'hover:text-text' : 'opacity-30'}`}
+                      onClick={() => {
+                        if (previousLayerId) onMoveObjectToLayer(obj.id, previousLayerId);
+                      }}
+                    >↑</span>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      title="Move to layer below"
+                      className={`px-0.5 ${nextLayerId ? 'hover:text-text' : 'opacity-30'}`}
+                      onClick={() => {
+                        if (nextLayerId) onMoveObjectToLayer(obj.id, nextLayerId);
+                      }}
+                    >↓</span>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      title="Delete object"
+                      className="px-0.5 hover:text-red-400"
+                      onClick={() => onDeleteObject(obj.id)}
+                    >✕</span>
+                  </span>
                 </button>
-              ))}
+                );
+              })}
             </div>
           </div>
         ))}
