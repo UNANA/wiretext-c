@@ -14,12 +14,11 @@ import ExportModal from './components/ExportModal';
 import SettingsModal from './components/SettingsModal';
 import AboutModal from './components/AboutModal';
 import { getDefaultProjectFilename, parseProjectFile, stringifyProjectFile } from './utils/projectFile';
+import { DEFAULT_LAYER_ID, findLayerAncestorId } from './utils/layerMigration';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
 import type { KeyboardShortcut, ComponentType } from './types';
 import './App.css';
-
-const DEFAULT_LAYER_ID = 'layer-1';
 
 type ContextMenuItem = {
   id: string;
@@ -124,9 +123,9 @@ function App() {
 
   // Keyboard shortcuts
   const canGroupSelection = selectedIds.size > 1
-    && selectedObjects.every(obj => (obj.layerId ?? DEFAULT_LAYER_ID) === DEFAULT_LAYER_ID);
+    && selectedObjects.every(obj => (findLayerAncestorId(objects, obj.id) ?? DEFAULT_LAYER_ID) === DEFAULT_LAYER_ID);
   const canUngroupSelection = selectedIds.size > 0
-    && selectedObjects.every(obj => (obj.layerId ?? DEFAULT_LAYER_ID) !== DEFAULT_LAYER_ID);
+    && selectedObjects.every(obj => (findLayerAncestorId(objects, obj.id) ?? DEFAULT_LAYER_ID) !== DEFAULT_LAYER_ID);
 
   const groupOrUngroupSelection = useCallback(() => {
     if (canGroupSelection) {
@@ -144,7 +143,7 @@ function App() {
   }, []);
 
   const handleSaveProject = useCallback(async () => {
-    const projectContents = stringifyProjectFile(objects, layers);
+    const projectContents = stringifyProjectFile(objects);
 
     if ('__TAURI_INTERNALS__' in window) {
       try {
@@ -175,7 +174,7 @@ function App() {
     link.remove();
     URL.revokeObjectURL(url);
     showFileToast('success', 'Project saved.');
-  }, [objects, layers, showFileToast]);
+  }, [objects, showFileToast]);
 
   const handleLoadProject = useCallback(() => {
     loadModeRef.current = 'replace';
@@ -266,12 +265,12 @@ function App() {
   }, []);
 
   const handleShare = useCallback(() => {
-    const url = encodeObjects(objects, layers);
+    const url = encodeObjects(objects);
     navigator.clipboard.writeText(url).then(() => {
       setShareToast(true);
       setTimeout(() => setShareToast(false), 2000);
     });
-  }, [objects, layers]);
+  }, [objects]);
 
   const handleSetPendingComponent = useCallback((type: ComponentType | null) => {
     setPendingComponent(type);
@@ -495,6 +494,7 @@ function App() {
               <PropertiesPanel
                 tool={tool}
                 cursor={cursor}
+                objects={objects}
                 selectedObjects={selectedObjects}
                 objectsCount={objectsCount}
                 onUpdateObject={updateObject}

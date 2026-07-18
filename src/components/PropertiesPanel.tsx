@@ -1,9 +1,12 @@
 import React from 'react';
 import type { Tool, Position, BoxStyle, CanvasObject, ConnectorHeadStyle, LabelAlign, LabelVerticalAlign } from '../types';
+import { findLayerAncestorId } from '../utils/layerMigration';
 
 interface PropertiesPanelProps {
   tool: Tool;
   cursor: Position;
+  // Full objects tree; needed to resolve the selected object's layer.
+  objects: CanvasObject[];
   selectedObjects: CanvasObject[];
   objectsCount: number;
   onUpdateObject?: (id: string, updates: Partial<CanvasObject>) => void;
@@ -68,11 +71,17 @@ const LabelPositionGrid: React.FC<{
 const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   tool,
   cursor,
+  objects,
   selectedObjects,
   objectsCount,
   onUpdateObject,
   onUpdateSelection,
 }) => {
+  const selectedLayerName = (() => {
+    if (selectedObjects.length !== 1) return undefined;
+    const layerId = findLayerAncestorId(objects, selectedObjects[0].id);
+    return objects.find(o => o.id === layerId)?.label;
+  })();
   const toolLabels: Record<Tool, string> = {
     select: 'Select',
     pan: 'Pan',
@@ -110,6 +119,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             <div className="h-px bg-border my-2" />
             <SingleObjectProperties
               obj={selectedObjects[0]}
+              layerName={selectedLayerName}
               onUpdateObject={onUpdateObject}
             />
           </>
@@ -244,11 +254,13 @@ const MultipleObjectProperties: React.FC<MultipleObjectPropertiesProps> = ({ obj
 
 interface SingleObjectPropertiesProps {
   obj: CanvasObject;
+  layerName?: string;
   onUpdateObject: (id: string, updates: Partial<CanvasObject>) => void;
 }
 
 const SingleObjectProperties: React.FC<SingleObjectPropertiesProps> = ({
   obj,
+  layerName,
   onUpdateObject,
 }) => {
   // Real-time updates - no local state needed, update parent directly
@@ -348,7 +360,7 @@ const SingleObjectProperties: React.FC<SingleObjectPropertiesProps> = ({
 
       <div className="flex justify-between items-center">
         <span className="text-text-dim">Layer</span>
-        <span className="text-text">{obj.layerName || 'Layer 1'}</span>
+        <span className="text-text">{layerName || 'Layer 1'}</span>
       </div>
 
       {/* Rotation - for lines/arrows (full 360° + continuous rotation) */}

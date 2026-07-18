@@ -1,18 +1,18 @@
 import React, { useMemo, useRef, useState } from 'react';
-import type { CanvasLayer, CanvasObject } from '../types';
-import { compareObjectsByStackOrder } from '../utils/boxDrawing';
+import type { CanvasObject } from '../types';
 import {
-  findPreviousSiblingId,
   getLayerDropPlacement,
   getLayerPanelDragPayload,
   setLayerPanelDragPayload,
   type LayerDropPlacement,
 } from '../utils/layerDragDrop';
 import { flattenObjectTree } from '../utils/objectHierarchy';
+import { DEFAULT_LAYER_ID, findLayerAncestorId, isLayerObject } from '../utils/layerMigration';
 import { getObjectTitle } from '../utils/objectLabel';
 
 interface LayersPanelProps {
-  layers: CanvasLayer[];
+  // Layer nodes (type === 'layer') in tree order — derived view from useCanvas.
+  layers: CanvasObject[];
   objects: CanvasObject[];
   selectedIds: Set<string>;
   onSelectObject: (id: string, addToSelection?: boolean) => void;
@@ -58,85 +58,52 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
 }) => {
   const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
   const [draftLayerName, setDraftLayerName] = useState('');
-  const [draggingLayerId, setDraggingLayerId] = useState<string | null>(null);
-  const [draggingObjectId, setDraggingObjectId] = useState<string | null>(null);
-  const [dropTargetLayerId, setDropTargetLayerId] = useState<string | null>(null);
+  const [dragging, setDragging] = useState<{ kind: 'layer' | 'object'; id: string } | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dropPlacement, setDropPlacement] = useState<LayerDropPlacement>('inside');
-  const [dropTargetObjectId, setDropTargetObjectId] = useState<string | null>(null);
   const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
   const [draftAnnotation, setDraftAnnotation] = useState('');
   const lastSelectedObjectId = useRef<string | null>(null);
-  const draggingLayerIdRef = useRef<string | null>(null);
-  const draggingObjectIdRef = useRef<string | null>(null);
+  const draggingRef = useRef<{ kind: 'layer' | 'object'; id: string } | null>(null);
 
   const finishDrag = () => {
-    draggingLayerIdRef.current = null;
-    draggingObjectIdRef.current = null;
-    setDraggingLayerId(null);
-    setDraggingObjectId(null);
-    setDropTargetLayerId(null);
-    setDropTargetObjectId(null);
+    draggingRef.current = null;
+    setDragging(null);
+    setDropTargetId(null);
   };
 
-  const startLayerDrag = (event: React.DragEvent, layerId: string) => {
-    setLayerPanelDragPayload(event.dataTransfer, { type: 'layer', id: layerId });
-    draggingLayerIdRef.current = layerId;
-    draggingObjectIdRef.current = null;
-    setDraggingLayerId(layerId);
-    setDraggingObjectId(null);
+  const startDrag = (event: React.DragEvent, node: CanvasObject) => {
+    const kind = isLayerObject(node) ? 'layer' : 'object';
+    setLayerPanelDragPayload(event.dataTransfer, { type: kind, id: node.id });
+    draggingRef.current = { kind, id: node.id };
+    setDragging({ kind, id: node.id });
   };
 
-  const startObjectDrag = (event: React.DragEvent, objectId: string) => {
-    setLayerPanelDragPayload(event.dataTransfer, { type: 'object', id: objectId });
-    draggingObjectIdRef.current = objectId;
-    draggingLayerIdRef.current = null;
-    setDraggingObjectId(objectId);
-    setDraggingLayerId(null);
-  };
-  const layersWithObjects = useMemo(() => {
-    const byLayer = new Map<string, CanvasObject[]>();
+  // The whole tree flattened depth-first with sibling zIndex order — this is
+  // exactly the canvas paint order, so panel order === stacking order.
+  const rows = useMemo(
+    () => flattenObjectTree([...objects].sort((a, b) => a.zIndex - b.zIndex)),
+    [objects],
+  );
+
+  // Objects directly belonging to each layer (nearest layer ancestor),
+  // shown as the per-layer count badge.
+  const objectCountByLayer = useMemo(() => {
+    const counts = new Map<string, number>();
     for (const obj of objects) {
-      const layerId = obj.layerId ?? 'layer-1';
-      const current = byLayer.get(layerId) ?? [];
-      current.push(obj);
-      byLayer.set(layerId, current);
+      if (isLayerObject(obj)) continue;
+      const layerId = findLayerAncestorId(objects, obj.id) ?? DEFAULT_LAYER_ID;
+      counts.set(layerId, (counts.get(layerId) ?? 0) + 1);
     }
+    return counts;
+  }, [objects]);
 
-    const ordered = [...layers].sort((a, b) => a.order - b.order);
-    const byParent = new Map<string | undefined, CanvasLayer[]>();
-    for (const layer of ordered) {
-      const parentId = layer.parentId && layers.some(candidate => candidate.id === layer.parentId)
-        ? layer.parentId
-        : undefined;
-      byParent.set(parentId, [...(byParent.get(parentId) ?? []), layer]);
-    }
-    const flattened: Array<CanvasLayer & { depth: number }> = [];
-    const appendChildren = (parentId: string | undefined, depth: number) => {
-      for (const layer of byParent.get(parentId) ?? []) {
-        flattened.push({ ...layer, depth });
-        appendChildren(layer.id, depth + 1);
-      }
-    };
-    appendChildren(undefined, 0);
-
-    return flattened.map((layer) => ({
-        ...layer,
-        // Depth-first rows with per-object depth, mirroring the layer tree
-        // indent (objects parented to an object on another layer render at
-        // this layer's root).
-        objects: flattenObjectTree(
-          [...(byLayer.get(layer.id) ?? [])].sort(compareObjectsByStackOrder),
-        ),
-      }));
-  }, [layers, objects]);
   const visibleObjectIds = useMemo(
-    () => layersWithObjects.flatMap(layer => layer.objects.map(row => row.object.id)),
-    [layersWithObjects]
+    () => rows.filter(row => !isLayerObject(row.object)).map(row => row.object.id),
+    [rows],
   );
-  const layerOrderIds = useMemo(
-    () => layersWithObjects.map(layer => layer.id),
-    [layersWithObjects]
-  );
+  const layerOrderIds = useMemo(() => layers.map(layer => layer.id), [layers]);
+  const nonLayerCount = visibleObjectIds.length;
 
   const handleObjectSelection = (event: React.MouseEvent, objectId: string) => {
     if (event.shiftKey && lastSelectedObjectId.current) {
@@ -154,7 +121,10 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
     lastSelectedObjectId.current = objectId;
   };
 
-  const activeLayerId = objects.find((obj) => selectedIds.has(obj.id))?.layerId ?? layersWithObjects[0]?.id ?? '';
+  const firstSelected = objects.find((obj) => selectedIds.has(obj.id));
+  const activeLayerId = (firstSelected && findLayerAncestorId(objects, firstSelected.id))
+    ?? layerOrderIds[0]
+    ?? '';
 
   const startRename = (layerId: string, currentName: string) => {
     setEditingLayerId(layerId);
@@ -179,11 +149,242 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
     setDraftAnnotation('');
   };
 
+  const previousSiblingLayerId = (layer: CanvasObject): string | undefined => {
+    const siblings = layers
+      .filter(other => (other.parentId ?? null) === (layer.parentId ?? null))
+      .sort((a, b) => a.zIndex - b.zIndex);
+    const index = siblings.findIndex(other => other.id === layer.id);
+    return index > 0 ? siblings[index - 1].id : undefined;
+  };
+
+  const handleRowDragOver = (event: React.DragEvent, node: CanvasObject) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'move';
+    const current = draggingRef.current;
+    if (!current || current.id === node.id) return;
+    setDropTargetId(node.id);
+    if (current.kind === 'object' && isLayerObject(node)) {
+      // Dropping an object anywhere on a layer row moves it into that layer.
+      setDropPlacement('inside');
+    } else {
+      const rect = event.currentTarget.getBoundingClientRect();
+      setDropPlacement(getLayerDropPlacement(event.clientY, rect.top, rect.height));
+    }
+  };
+
+  const handleRowDrop = (event: React.DragEvent, node: CanvasObject) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const payload = getLayerPanelDragPayload(event.dataTransfer);
+    if (!payload || payload.id === node.id) {
+      finishDrag();
+      return;
+    }
+    if (payload.type === 'object') {
+      if (isLayerObject(node)) {
+        onMoveObjectToLayer(payload.id, node.id);
+      } else {
+        onReorderObjectByDrop(payload.id, node.id, dropPlacement);
+      }
+    } else {
+      // A layer dropped onto an object row acts on the layer that owns the
+      // object, so drops anywhere in a layer's block behave consistently.
+      const targetLayerId = isLayerObject(node)
+        ? node.id
+        : findLayerAncestorId(objects, node.id) ?? DEFAULT_LAYER_ID;
+      if (targetLayerId !== payload.id) {
+        onReorderLayer(payload.id, targetLayerId, isLayerObject(node) ? dropPlacement : 'after');
+      }
+    }
+    finishDrag();
+  };
+
+  const dropIndicatorClasses = (nodeId: string) => `
+    ${dropTargetId === nodeId && dropPlacement === 'inside' ? 'ring-1 ring-accent' : ''}
+    ${dropTargetId === nodeId && dropPlacement === 'before' ? 'border-t border-accent' : ''}
+    ${dropTargetId === nodeId && dropPlacement === 'after' ? 'border-b border-accent' : ''}`;
+
+  const renderLayerRow = (layer: CanvasObject, depth: number) => {
+    const name = layer.label || 'Layer';
+    return (
+      <button
+        key={layer.id}
+        draggable={editingLayerId !== layer.id}
+        onDragStart={(e) => startDrag(e, layer)}
+        onDragOver={(e) => handleRowDragOver(e, layer)}
+        onDrop={(e) => handleRowDrop(e, layer)}
+        onDragEnd={finishDrag}
+        className={`flex w-full items-center gap-1.5 px-3 py-1 text-left text-xs transition-colors ${activeLayerId === layer.id ? 'bg-accent/20 text-text' : 'text-text-dim hover:bg-surface'
+          } ${dropIndicatorClasses(layer.id)}`}
+        style={{ paddingLeft: `${12 + depth * 14}px` }}
+      >
+        {dragging && (
+          <span className="text-[10px] opacity-70">
+            ⋮
+          </span>
+        )}
+        <span className="text-[10px]">◈</span>
+        {editingLayerId === layer.id ? (
+          <input
+            autoFocus
+            value={draftLayerName}
+            onChange={(e) => setDraftLayerName(e.target.value)}
+            onBlur={() => commitRename(layer.id)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitRename(layer.id);
+              if (e.key === 'Escape') {
+                setEditingLayerId(null);
+                setDraftLayerName('');
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="flex-1 bg-bg border border-border rounded px-1 py-0 text-xs text-text outline-none"
+          />
+        ) : (
+          <span
+            className="flex-1 truncate"
+            onDoubleClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              startRename(layer.id, name);
+            }}
+          >
+            {name}
+          </span>
+        )}
+        <span className="text-[10px] opacity-70">{objectCountByLayer.get(layer.id) ?? 0}</span>
+        {layer.id !== DEFAULT_LAYER_ID && (
+          <span className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
+            <span
+              role="button"
+              tabIndex={0}
+              title="Outdent layer"
+              className="px-0.5 hover:text-text"
+              onClick={() => onSetLayerParent(
+                layer.id,
+                objects.find(item => item.id === layer.parentId)?.parentId,
+              )}
+            >←</span>
+            <span
+              role="button"
+              tabIndex={0}
+              title="Indent under previous layer"
+              className="px-0.5 hover:text-text"
+              onClick={() => {
+                const previousId = previousSiblingLayerId(layer);
+                if (previousId) onSetLayerParent(layer.id, previousId);
+              }}
+            >→</span>
+            <span
+              role="button"
+              tabIndex={0}
+              title={
+                (objectCountByLayer.get(layer.id) ?? 0) > 0
+                  ? 'Delete layer (its objects move up to the parent layer)'
+                  : 'Delete empty layer'
+              }
+              className="px-0.5 hover:text-red-400"
+              onClick={() => onDeleteLayer(layer.id)}
+            >✕</span>
+          </span>
+        )}
+      </button>
+    );
+  };
+
+  const renderObjectRow = (obj: CanvasObject, depth: number) => {
+    const ownLayerId = findLayerAncestorId(objects, obj.id) ?? DEFAULT_LAYER_ID;
+    const layerIndex = layerOrderIds.indexOf(ownLayerId);
+    const previousLayerId = layerIndex > 0 ? layerOrderIds[layerIndex - 1] : undefined;
+    const nextLayerId = layerIndex >= 0 && layerIndex < layerOrderIds.length - 1
+      ? layerOrderIds[layerIndex + 1]
+      : undefined;
+    return (
+      <button
+        key={obj.id}
+        draggable={editingObjectId !== obj.id}
+        onDragStart={(e) => startDrag(e, obj)}
+        onDragOver={(e) => handleRowDragOver(e, obj)}
+        onDrop={(e) => handleRowDrop(e, obj)}
+        onDragEnd={finishDrag}
+        onClick={(event) => handleObjectSelection(event, obj.id)}
+        className={`flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs ${selectedIds.has(obj.id) ? 'bg-accent/30 text-text' : 'text-text-dim hover:bg-surface'
+          } ${dropIndicatorClasses(obj.id)}`}
+        style={{ paddingLeft: `${16 + depth * 14}px` }}
+        title={getObjectTitle(obj)}
+      >
+        <span className="text-[10px] opacity-70">⋮⋮</span>
+        <span className="w-3 text-[10px]">{getObjectIcon(obj)}</span>
+        {editingObjectId === obj.id ? (
+          <textarea
+            autoFocus
+            rows={Math.min(Math.max(draftAnnotation.split('\n').length, 1), 4)}
+            value={draftAnnotation}
+            onChange={(e) => setDraftAnnotation(e.target.value)}
+            onBlur={() => commitObjectRename(obj)}
+            onKeyDown={(e) => {
+              // Enter inserts a newline (annotations may span
+              // multiple lines); Escape cancels. Commit happens on
+              // blur, matching the text-object edit popup.
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setEditingObjectId(null);
+                setDraftAnnotation('');
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="flex-1 resize-none bg-bg border border-border rounded px-1 py-0 text-xs text-text outline-none"
+          />
+        ) : (
+          <span
+            className="truncate"
+            title={obj.annotation}
+            onDoubleClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              startObjectRename(obj);
+            }}
+          >
+            {getObjectTitle(obj)}
+          </span>
+        )}
+        <span className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
+          <span
+            role="button"
+            tabIndex={0}
+            title="Move to layer above"
+            className={`px-0.5 ${previousLayerId ? 'hover:text-text' : 'opacity-30'}`}
+            onClick={() => {
+              if (previousLayerId) onMoveObjectToLayer(obj.id, previousLayerId);
+            }}
+          >↑</span>
+          <span
+            role="button"
+            tabIndex={0}
+            title="Move to layer below"
+            className={`px-0.5 ${nextLayerId ? 'hover:text-text' : 'opacity-30'}`}
+            onClick={() => {
+              if (nextLayerId) onMoveObjectToLayer(obj.id, nextLayerId);
+            }}
+          >↓</span>
+          <span
+            role="button"
+            tabIndex={0}
+            title="Delete object"
+            className="px-0.5 hover:text-red-400"
+            onClick={() => onDeleteObject(obj.id)}
+          >✕</span>
+        </span>
+      </button>
+    );
+  };
+
   return (
     <div className="flex h-full flex-col bg-surface select-none">
       <div className="flex items-center justify-between border-b border-border px-3 py-2 text-[10px] uppercase tracking-wider text-text-dim">
         <span>Layers</span>
-        <span>{selectedIds.size}/{objects.length}</span>
+        <span>{selectedIds.size}/{nonLayerCount}</span>
       </div>
 
       <div className="border-b border-border px-2 py-1">
@@ -197,248 +398,8 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
       </div>
 
       <div className="flex-1 overflow-y-auto py-1">
-        {layersWithObjects.map((layer) => (
-          <div
-            key={layer.id}
-            className="mb-1"
-            onDragOver={(e) => {
-              e.preventDefault();
-              e.dataTransfer.dropEffect = 'move';
-              if ((draggingLayerIdRef.current && draggingLayerIdRef.current !== layer.id) || draggingObjectIdRef.current) {
-                setDropTargetLayerId(layer.id);
-                setDropPlacement('inside');
-              }
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              const payload = getLayerPanelDragPayload(e.dataTransfer);
-              if (payload?.type === 'object') {
-                onMoveObjectToLayer(payload.id, layer.id);
-              } else if (payload?.type === 'layer') {
-                onReorderLayer(payload.id, layer.id, dropPlacement);
-              }
-              finishDrag();
-            }}
-          >
-            <button
-              draggable={editingLayerId !== layer.id}
-              onDragStart={(e) => startLayerDrag(e, layer.id)}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                e.dataTransfer.dropEffect = 'move';
-                if ((draggingLayerIdRef.current && draggingLayerIdRef.current !== layer.id) || draggingObjectIdRef.current) {
-                  setDropTargetLayerId(layer.id);
-                  if (draggingLayerIdRef.current) {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    setDropPlacement(getLayerDropPlacement(e.clientY, rect.top, rect.height));
-                  } else {
-                    setDropPlacement('inside');
-                  }
-                }
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const payload = getLayerPanelDragPayload(e.dataTransfer);
-                if (payload?.type === 'object') {
-                  onMoveObjectToLayer(payload.id, layer.id);
-                } else if (payload?.type === 'layer') {
-                  onReorderLayer(payload.id, layer.id, dropPlacement);
-                }
-                finishDrag();
-              }}
-              onDragEnd={finishDrag}
-              className={`flex w-full items-center gap-1.5 px-3 py-1 text-left text-xs transition-colors ${activeLayerId === layer.id ? 'bg-accent/20 text-text' : 'text-text-dim hover:bg-surface'
-                } ${dropTargetLayerId === layer.id && dropPlacement === 'inside' ? 'ring-1 ring-accent' : ''}
-                ${dropTargetLayerId === layer.id && dropPlacement === 'before' ? 'border-t border-accent' : ''}
-                ${dropTargetLayerId === layer.id && dropPlacement === 'after' ? 'border-b border-accent' : ''}`}
-              style={{ paddingLeft: `${12 + layer.depth * 14}px` }}
-            >
-              {(draggingLayerId || draggingObjectId) && (
-                <span className="text-[10px] opacity-70">
-                  ⋮
-                </span>
-              )}
-              <span className="text-[10px]">◈</span>
-              {editingLayerId === layer.id ? (
-                <input
-                  autoFocus
-                  value={draftLayerName}
-                  onChange={(e) => setDraftLayerName(e.target.value)}
-                  onBlur={() => commitRename(layer.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') commitRename(layer.id);
-                    if (e.key === 'Escape') {
-                      setEditingLayerId(null);
-                      setDraftLayerName('');
-                    }
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  className="flex-1 bg-bg border border-border rounded px-1 py-0 text-xs text-text outline-none"
-                />
-              ) : (
-                <span
-                  className="flex-1 truncate"
-                  onDoubleClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    startRename(layer.id, layer.name);
-                  }}
-                >
-                  {layer.name}
-                </span>
-              )}
-              <span className="text-[10px] opacity-70">{layer.objectCount}</span>
-              {layer.id !== 'layer-1' && (
-                <span className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    title="Outdent layer"
-                    className="px-0.5 hover:text-text"
-                    onClick={() => onSetLayerParent(layer.id, layers.find(item => item.id === layer.parentId)?.parentId)}
-                  >←</span>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    title="Indent under previous layer"
-                    className="px-0.5 hover:text-text"
-                    onClick={() => {
-                      const previousSiblingId = findPreviousSiblingId(layersWithObjects, layer.id);
-                      if (previousSiblingId) onSetLayerParent(layer.id, previousSiblingId);
-                    }}
-                  >→</span>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    title={
-                      layer.objectCount > 0
-                        ? 'Delete layer (its objects move up to the parent layer)'
-                        : 'Delete empty layer'
-                    }
-                    className="px-0.5 hover:text-red-400"
-                    onClick={() => onDeleteLayer(layer.id)}
-                  >✕</span>
-                </span>
-              )}
-            </button>
-            <div className="space-y-0.5" style={{ paddingLeft: `${16 + layer.depth * 14}px` }}>
-              {layer.objects.map(({ object: obj, depth }) => {
-                const layerIndex = layerOrderIds.indexOf(layer.id);
-                const previousLayerId = layerIndex > 0 ? layerOrderIds[layerIndex - 1] : undefined;
-                const nextLayerId = layerIndex >= 0 && layerIndex < layerOrderIds.length - 1
-                  ? layerOrderIds[layerIndex + 1]
-                  : undefined;
-                return (
-                <button
-                  key={obj.id}
-                  draggable={editingObjectId !== obj.id}
-                  onDragStart={(e) => startObjectDrag(e, obj.id)}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = 'move';
-                    if (draggingObjectIdRef.current && draggingObjectIdRef.current !== obj.id) {
-                      setDropTargetObjectId(obj.id);
-                      // Same zones as layer rows: edges reorder as a
-                      // sibling, the middle nests as a child.
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      setDropPlacement(getLayerDropPlacement(e.clientY, rect.top, rect.height));
-                    }
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const payload = getLayerPanelDragPayload(e.dataTransfer);
-                    if (payload?.type === 'object' && payload.id !== obj.id) {
-                      onReorderObjectByDrop(payload.id, obj.id, dropPlacement);
-                    } else if (payload?.type === 'layer') {
-                      // Dropping a dragged layer onto an object row (which
-                      // takes up most of the panel's vertical space) should
-                      // still act as a drop onto the layer that owns this
-                      // object, matching the layer header's own onDrop —
-                      // otherwise the drop is silently swallowed here since
-                      // this handler stops propagation.
-                      onReorderLayer(payload.id, layer.id, dropPlacement);
-                    }
-                    finishDrag();
-                  }}
-                  onDragEnd={finishDrag}
-                  onClick={(event) => handleObjectSelection(event, obj.id)}
-                  className={`flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs ${selectedIds.has(obj.id) ? 'bg-accent/30 text-text' : 'text-text-dim hover:bg-surface'
-                    } ${dropTargetObjectId === obj.id && dropPlacement === 'inside' ? 'ring-1 ring-accent' : ''}
-                    ${dropTargetObjectId === obj.id && dropPlacement === 'before' ? 'border-t border-accent' : ''}
-                    ${dropTargetObjectId === obj.id && dropPlacement === 'after' ? 'border-b border-accent' : ''}`}
-                  style={{ paddingLeft: `${8 + depth * 14}px` }}
-                  title={getObjectTitle(obj)}
-                >
-                  <span className="text-[10px] opacity-70">⋮⋮</span>
-                  <span className="w-3 text-[10px]">{getObjectIcon(obj)}</span>
-                  {editingObjectId === obj.id ? (
-                    <textarea
-                      autoFocus
-                      rows={Math.min(Math.max(draftAnnotation.split('\n').length, 1), 4)}
-                      value={draftAnnotation}
-                      onChange={(e) => setDraftAnnotation(e.target.value)}
-                      onBlur={() => commitObjectRename(obj)}
-                      onKeyDown={(e) => {
-                        // Enter inserts a newline (annotations may span
-                        // multiple lines); Escape cancels. Commit happens on
-                        // blur, matching the text-object edit popup.
-                        if (e.key === 'Escape') {
-                          e.preventDefault();
-                          setEditingObjectId(null);
-                          setDraftAnnotation('');
-                        }
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                      className="flex-1 resize-none bg-bg border border-border rounded px-1 py-0 text-xs text-text outline-none"
-                    />
-                  ) : (
-                    <span
-                      className="truncate"
-                      title={obj.annotation}
-                      onDoubleClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        startObjectRename(obj);
-                      }}
-                    >
-                      {getObjectTitle(obj)}
-                    </span>
-                  )}
-                  <span className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
-                    <span
-                      role="button"
-                      tabIndex={0}
-                      title="Move to layer above"
-                      className={`px-0.5 ${previousLayerId ? 'hover:text-text' : 'opacity-30'}`}
-                      onClick={() => {
-                        if (previousLayerId) onMoveObjectToLayer(obj.id, previousLayerId);
-                      }}
-                    >↑</span>
-                    <span
-                      role="button"
-                      tabIndex={0}
-                      title="Move to layer below"
-                      className={`px-0.5 ${nextLayerId ? 'hover:text-text' : 'opacity-30'}`}
-                      onClick={() => {
-                        if (nextLayerId) onMoveObjectToLayer(obj.id, nextLayerId);
-                      }}
-                    >↓</span>
-                    <span
-                      role="button"
-                      tabIndex={0}
-                      title="Delete object"
-                      className="px-0.5 hover:text-red-400"
-                      onClick={() => onDeleteObject(obj.id)}
-                    >✕</span>
-                  </span>
-                </button>
-                );
-              })}
-            </div>
-          </div>
+        {rows.map(({ object: node, depth }) => (
+          isLayerObject(node) ? renderLayerRow(node, depth) : renderObjectRow(node, depth)
         ))}
       </div>
     </div>
