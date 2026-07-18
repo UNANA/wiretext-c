@@ -1,6 +1,13 @@
 import React, { useMemo, useRef, useState } from 'react';
 import type { CanvasLayer, CanvasObject } from '../types';
 import { compareObjectsByStackOrder } from '../utils/boxDrawing';
+import {
+  findPreviousSiblingId,
+  getLayerDropPlacement,
+  getLayerPanelDragPayload,
+  setLayerPanelDragPayload,
+  type LayerDropPlacement,
+} from '../utils/layerDragDrop';
 
 interface LayersPanelProps {
   layers: CanvasLayer[];
@@ -13,8 +20,9 @@ interface LayersPanelProps {
   onMoveObjectToLayer: (objectId: string, layerId: string) => void;
   onReorderObjectByDrop: (dragObjectId: string, targetObjectId: string) => void;
   onRenameLayer: (layerId: string, name: string) => void;
-  onReorderLayer: (dragLayerId: string, targetLayerId: string) => void;
+  onReorderLayer: (dragLayerId: string, targetLayerId: string, placement?: LayerDropPlacement) => void;
   onSetLayerParent: (layerId: string, parentId?: string) => void;
+  onDeleteLayer: (layerId: string) => void;
   onCreateLayerFromSelection: () => void;
   onArrangeSelectionLayer: (mode: 'toFront' | 'forward' | 'backward' | 'toBack') => void;
 }
@@ -49,6 +57,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
   onRenameLayer,
   onReorderLayer,
   onSetLayerParent,
+  onDeleteLayer,
   onCreateLayerFromSelection,
   onArrangeSelectionLayer,
 }) => {
@@ -57,10 +66,38 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
   const [draggingLayerId, setDraggingLayerId] = useState<string | null>(null);
   const [draggingObjectId, setDraggingObjectId] = useState<string | null>(null);
   const [dropTargetLayerId, setDropTargetLayerId] = useState<string | null>(null);
+  const [dropPlacement, setDropPlacement] = useState<LayerDropPlacement>('inside');
   const [dropTargetObjectId, setDropTargetObjectId] = useState<string | null>(null);
   const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
   const [draftAnnotation, setDraftAnnotation] = useState('');
   const lastSelectedObjectId = useRef<string | null>(null);
+  const draggingLayerIdRef = useRef<string | null>(null);
+  const draggingObjectIdRef = useRef<string | null>(null);
+
+  const finishDrag = () => {
+    draggingLayerIdRef.current = null;
+    draggingObjectIdRef.current = null;
+    setDraggingLayerId(null);
+    setDraggingObjectId(null);
+    setDropTargetLayerId(null);
+    setDropTargetObjectId(null);
+  };
+
+  const startLayerDrag = (event: React.DragEvent, layerId: string) => {
+    setLayerPanelDragPayload(event.dataTransfer, { type: 'layer', id: layerId });
+    draggingLayerIdRef.current = layerId;
+    draggingObjectIdRef.current = null;
+    setDraggingLayerId(layerId);
+    setDraggingObjectId(null);
+  };
+
+  const startObjectDrag = (event: React.DragEvent, objectId: string) => {
+    setLayerPanelDragPayload(event.dataTransfer, { type: 'object', id: objectId });
+    draggingObjectIdRef.current = objectId;
+    draggingLayerIdRef.current = null;
+    setDraggingObjectId(objectId);
+    setDraggingLayerId(null);
+  };
   const layersWithObjects = useMemo(() => {
     const byLayer = new Map<string, CanvasObject[]>();
     for (const obj of objects) {
@@ -162,52 +199,57 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
             className="mb-1"
             onDragOver={(e) => {
               e.preventDefault();
-              if ((draggingLayerId && draggingLayerId !== layer.id) || draggingObjectId) {
+              e.dataTransfer.dropEffect = 'move';
+              if ((draggingLayerIdRef.current && draggingLayerIdRef.current !== layer.id) || draggingObjectIdRef.current) {
                 setDropTargetLayerId(layer.id);
+                setDropPlacement('inside');
               }
             }}
             onDrop={(e) => {
               e.preventDefault();
-              if (draggingObjectId) {
-                onMoveObjectToLayer(draggingObjectId, layer.id);
-              } else if (draggingLayerId) {
-                onReorderLayer(draggingLayerId, layer.id);
+              const payload = getLayerPanelDragPayload(e.dataTransfer);
+              if (payload?.type === 'object') {
+                onMoveObjectToLayer(payload.id, layer.id);
+              } else if (payload?.type === 'layer') {
+                onReorderLayer(payload.id, layer.id, dropPlacement);
               }
-              setDraggingLayerId(null);
-              setDraggingObjectId(null);
-              setDropTargetLayerId(null);
-              setDropTargetObjectId(null);
+              finishDrag();
             }}
           >
             <button
               draggable={editingLayerId !== layer.id}
-              onDragStart={() => setDraggingLayerId(layer.id)}
+              onDragStart={(e) => startLayerDrag(e, layer.id)}
               onDragOver={(e) => {
                 e.preventDefault();
-                if ((draggingLayerId && draggingLayerId !== layer.id) || draggingObjectId) {
+                e.stopPropagation();
+                e.dataTransfer.dropEffect = 'move';
+                if ((draggingLayerIdRef.current && draggingLayerIdRef.current !== layer.id) || draggingObjectIdRef.current) {
                   setDropTargetLayerId(layer.id);
+                  if (draggingLayerIdRef.current) {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setDropPlacement(getLayerDropPlacement(e.clientY, rect.top, rect.height));
+                  } else {
+                    setDropPlacement('inside');
+                  }
                 }
               }}
               onDrop={(e) => {
                 e.preventDefault();
-                if (draggingObjectId) {
-                  onMoveObjectToLayer(draggingObjectId, layer.id);
-                } else if (draggingLayerId) {
-                  onReorderLayer(draggingLayerId, layer.id);
+                e.stopPropagation();
+                const payload = getLayerPanelDragPayload(e.dataTransfer);
+                if (payload?.type === 'object') {
+                  onMoveObjectToLayer(payload.id, layer.id);
+                } else if (payload?.type === 'layer') {
+                  onReorderLayer(payload.id, layer.id, dropPlacement);
                 }
-                setDraggingLayerId(null);
-                setDraggingObjectId(null);
-                setDropTargetLayerId(null);
-                setDropTargetObjectId(null);
+                finishDrag();
               }}
-              onDragEnd={() => {
-                setDraggingLayerId(null);
-                setDraggingObjectId(null);
-                setDropTargetLayerId(null);
-              }}
+              onDragEnd={finishDrag}
               onClick={() => onMoveSelectionToLayer(layer.id)}
               className={`flex w-full items-center gap-1.5 px-3 py-1 text-left text-xs transition-colors ${activeLayerId === layer.id ? 'bg-accent/20 text-text' : 'text-text-dim hover:bg-surface'
-                } ${dropTargetLayerId === layer.id ? 'ring-1 ring-accent' : ''}`}
+                } ${dropTargetLayerId === layer.id && dropPlacement === 'inside' ? 'ring-1 ring-accent' : ''}
+                ${dropTargetLayerId === layer.id && dropPlacement === 'before' ? 'border-t border-accent' : ''}
+                ${dropTargetLayerId === layer.id && dropPlacement === 'after' ? 'border-b border-accent' : ''}`}
               style={{ paddingLeft: `${12 + layer.depth * 14}px` }}
             >
               {(draggingLayerId || draggingObjectId) && (
@@ -260,11 +302,21 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                     title="Indent under previous layer"
                     className="px-0.5 hover:text-text"
                     onClick={() => {
-                      const index = layersWithObjects.findIndex(item => item.id === layer.id);
-                      const previous = index > 0 ? layersWithObjects[index - 1] : undefined;
-                      if (previous) onSetLayerParent(layer.id, previous.id);
+                      const previousSiblingId = findPreviousSiblingId(layersWithObjects, layer.id);
+                      if (previousSiblingId) onSetLayerParent(layer.id, previousSiblingId);
                     }}
                   >→</span>
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    title={
+                      layer.objectCount > 0
+                        ? 'Delete layer (its objects move up to the parent layer)'
+                        : 'Delete empty layer'
+                    }
+                    className="px-0.5 hover:text-red-400"
+                    onClick={() => onDeleteLayer(layer.id)}
+                  >✕</span>
                 </span>
               )}
             </button>
@@ -273,28 +325,32 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                 <button
                   key={obj.id}
                   draggable={editingObjectId !== obj.id}
-                  onDragStart={() => setDraggingObjectId(obj.id)}
+                  onDragStart={(e) => startObjectDrag(e, obj.id)}
                   onDragOver={(e) => {
                     e.preventDefault();
-                    if (draggingObjectId && draggingObjectId !== obj.id) {
+                    e.dataTransfer.dropEffect = 'move';
+                    if (draggingObjectIdRef.current && draggingObjectIdRef.current !== obj.id) {
                       setDropTargetObjectId(obj.id);
                     }
                   }}
                   onDrop={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    if (draggingObjectId && draggingObjectId !== obj.id) {
-                      onReorderObjectByDrop(draggingObjectId, obj.id);
+                    const payload = getLayerPanelDragPayload(e.dataTransfer);
+                    if (payload?.type === 'object' && payload.id !== obj.id) {
+                      onReorderObjectByDrop(payload.id, obj.id);
+                    } else if (payload?.type === 'layer') {
+                      // Dropping a dragged layer onto an object row (which
+                      // takes up most of the panel's vertical space) should
+                      // still act as a drop onto the layer that owns this
+                      // object, matching the layer header's own onDrop —
+                      // otherwise the drop is silently swallowed here since
+                      // this handler stops propagation.
+                      onReorderLayer(payload.id, layer.id, dropPlacement);
                     }
-                    setDraggingObjectId(null);
-                    setDropTargetObjectId(null);
-                    setDropTargetLayerId(null);
+                    finishDrag();
                   }}
-                  onDragEnd={() => {
-                    setDraggingObjectId(null);
-                    setDropTargetObjectId(null);
-                    setDropTargetLayerId(null);
-                  }}
+                  onDragEnd={finishDrag}
                   onClick={(event) => handleObjectSelection(event, obj.id)}
                   className={`flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs ${selectedIds.has(obj.id) ? 'bg-accent/30 text-text' : 'text-text-dim hover:bg-surface'
                     } ${dropTargetObjectId === obj.id ? 'ring-1 ring-accent' : ''}`}

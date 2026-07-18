@@ -75,7 +75,6 @@ export interface CanvasObject {
   layerId?: string;
   layerName?: string;
   layerOrder?: number;
-  layerParentId?: string;
 
   // For box/component
   borderStyle?: BoxStyle;
