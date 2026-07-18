@@ -49,7 +49,11 @@ export type ObjectType =
   | 'line'
   | 'arrow'
   | 'component'
-  | 'pencil';
+  | 'pencil'
+  // Non-graphic grouping node. Never rendered or hit-tested; its `label` is
+  // the layer name and its children (objects whose parentId chain reaches it)
+  // form the layer's contents.
+  | 'layer';
 
 export type ConnectorHeadStyle = 'arrow' | 'line' | 'dot';
 
@@ -75,14 +79,12 @@ export interface CanvasObject {
   width: number;
   height: number;
   zIndex: number;
-  // Parent object for object-level nesting (mirrors CanvasLayer.parentId).
-  // Moving a parent moves its descendants by the same delta; deleting a
-  // parent re-parents children to the parent's own parent. Persisted with
-  // the object in project files and share URLs; absent in legacy payloads.
+  // Parent node in the unified tree: a layer node ('layer'), another object
+  // (nesting), or absent only for root layer nodes. Moving a parent moves
+  // its descendants by the same delta; deleting a parent re-parents children
+  // to the parent's own parent. Persisted with the object in project files
+  // and share URLs; absent in legacy payloads.
   parentId?: string;
-  layerId?: string;
-  layerName?: string;
-  layerOrder?: number;
 
   // For box/component
   borderStyle?: BoxStyle;
@@ -139,14 +141,6 @@ export interface CanvasObject {
   // and as the object's title in the layers panel. May contain embedded
   // newlines (issue #12); legacy single-line values read back unchanged.
   annotation?: string;
-}
-
-export interface CanvasLayer {
-  id: string;
-  name: string;
-  order: number;
-  objectCount: number;
-  parentId?: string;
 }
 
 export interface GridSize {
