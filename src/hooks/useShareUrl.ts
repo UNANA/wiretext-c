@@ -1,26 +1,22 @@
 import { useEffect } from 'react';
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from 'lz-string';
-import type { CanvasLayer, CanvasObject } from '../types';
+import type { CanvasObject } from '../types';
+import type { CanvasLayer } from '../utils/layerMigration';
 
 export interface DecodedShareData {
     objects: CanvasObject[];
-    // Absent when decoding a share link created before layer hierarchy was
-    // included in the payload — see decodeObjects, which falls back to the
-    // legacy per-object layerParentId migration in that case (same as
-    // project files without a persisted `layers` array).
+    // Present only when decoding a v1 share link that carried separate layer
+    // entities; loadObjects migrates them into the unified tree.
     layers?: CanvasLayer[];
 }
 
 /**
- * Encode objects (and, optionally, layer hierarchy/order/names) into a
- * compressed URL hash string. When `layers` is omitted the payload is the
- * bare objects array, matching the legacy format older share links used —
- * this keeps decodeObjects' legacy branch exercised and avoids surprising
- * older builds that might still read the hash directly.
+ * Encode objects into a compressed URL hash string. Layers travel inside
+ * `objects` as `type: 'layer'` nodes (unified tree), so the payload is just
+ * `{ objects }` — no separate layers field is written anymore.
  */
-export function encodeObjects(objects: CanvasObject[], layers?: CanvasLayer[]): string {
-    const payload = layers && layers.length > 0 ? { objects, layers } : objects;
-    const json = JSON.stringify(payload);
+export function encodeObjects(objects: CanvasObject[]): string {
+    const json = JSON.stringify({ objects });
     const compressed = compressToEncodedURIComponent(json);
     return `${window.location.origin}${window.location.pathname}#${compressed}`;
 }

@@ -1,16 +1,19 @@
-import type { CanvasLayer, CanvasObject } from '../types';
+import type { CanvasObject } from '../types';
+import type { CanvasLayer } from './layerMigration';
 
-const FILE_VERSION = 1;
+// Version 2: layers are `type: 'layer'` objects inside `objects` (unified
+// tree); the separate `layers` array is no longer written. Version 1 files
+// (objects + optional `layers`) and pre-versioned bare arrays are still
+// read — the conversion happens at load time via migrateToUnifiedTree.
+const FILE_VERSION = 2;
 
 export interface WiretextProjectFile {
   app: 'wiretext';
   version: number;
   savedAt: string;
   objects: CanvasObject[];
-  // Optional: layer hierarchy/order/names. Absent in files saved before
-  // layer nesting existed, or by older builds of this feature — see
-  // parseProjectFile, which falls back to reconstructing/migrating from the
-  // objects in that case.
+  // v1 only: separate layer entities. Never written anymore; carried through
+  // parseProjectFile so loadObjects can migrate old files.
   layers?: CanvasLayer[];
 }
 
@@ -19,18 +22,17 @@ export interface ParsedProjectFile {
   layers?: CanvasLayer[];
 }
 
-export function createProjectFile(objects: CanvasObject[], layers?: CanvasLayer[]): WiretextProjectFile {
+export function createProjectFile(objects: CanvasObject[]): WiretextProjectFile {
   return {
     app: 'wiretext',
     version: FILE_VERSION,
     savedAt: new Date().toISOString(),
     objects,
-    ...(layers ? { layers } : {}),
   };
 }
 
-export function stringifyProjectFile(objects: CanvasObject[], layers?: CanvasLayer[]): string {
-  return JSON.stringify(createProjectFile(objects, layers), null, 2);
+export function stringifyProjectFile(objects: CanvasObject[]): string {
+  return JSON.stringify(createProjectFile(objects), null, 2);
 }
 
 export function parseProjectFile(text: string): ParsedProjectFile {
