@@ -98,6 +98,7 @@ function App() {
     reorderLayer,
     setLayerParent,
     deleteLayer,
+    deleteObject,
     arrangeSelectionLayer,
     alignSelection,
     distributeSelection,
@@ -493,6 +494,7 @@ function App() {
                 onReorderLayer={reorderLayer}
                 onSetLayerParent={setLayerParent}
                 onDeleteLayer={deleteLayer}
+                onDeleteObject={deleteObject}
                 onCreateLayerFromSelection={createLayerFromSelection}
                 onArrangeSelectionLayer={arrangeSelectionLayer}
               />
