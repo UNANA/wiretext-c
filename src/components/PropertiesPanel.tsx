@@ -230,12 +230,12 @@ const MultipleObjectProperties: React.FC<MultipleObjectPropertiesProps> = ({ obj
 
       <div>
         <label className="block text-2xs text-text-dim mb-1">Annotation</label>
-        <input
-          type="text"
+        <textarea
+          rows={3}
           value={annotation ?? ''}
           placeholder={annotation === undefined ? 'Mixed' : 'Add note...'}
           onChange={(e) => onUpdateSelection({ annotation: e.target.value || undefined })}
-          className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
+          className="w-full resize-y bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
         />
       </div>
     </div>
@@ -1023,12 +1023,12 @@ const SingleObjectProperties: React.FC<SingleObjectPropertiesProps> = ({
       {/* Annotation */}
       <div>
         <label className="block text-2xs text-text-dim mb-1">Annotation</label>
-        <input
-          type="text"
+        <textarea
+          rows={3}
           value={obj.annotation || ''}
           onChange={(e) => onUpdateObject(obj.id, { annotation: e.target.value || undefined })}
           placeholder="Add note..."
-          className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
+          className="w-full resize-y bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
         />
       </div>
 

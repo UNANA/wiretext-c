@@ -9,6 +9,7 @@ import {
   type LayerDropPlacement,
 } from '../utils/layerDragDrop';
 import { flattenObjectTree } from '../utils/objectHierarchy';
+import { getObjectTitle } from '../utils/objectLabel';
 
 interface LayersPanelProps {
   layers: CanvasLayer[];
@@ -26,13 +27,6 @@ interface LayersPanelProps {
   onDeleteObject: (objectId: string) => void;
   onCreateLayerFromSelection: () => void;
   onArrangeSelectionLayer: (mode: 'toFront' | 'forward' | 'backward' | 'toBack') => void;
-}
-
-function getObjectTitle(obj: CanvasObject): string {
-  if (obj.type === 'line' && obj.isConnector) return obj.annotation || obj.label || 'connector';
-  if (obj.type === 'component') return obj.annotation || obj.label || obj.componentType || 'component';
-  if (obj.type === 'text') return obj.content?.split('\n')[0] || 'text';
-  return obj.annotation || obj.label || obj.type;
 }
 
 function getObjectIcon(obj: CanvasObject): string {
@@ -381,24 +375,29 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                   <span className="text-[10px] opacity-70">⋮⋮</span>
                   <span className="w-3 text-[10px]">{getObjectIcon(obj)}</span>
                   {editingObjectId === obj.id ? (
-                    <input
+                    <textarea
                       autoFocus
+                      rows={Math.min(Math.max(draftAnnotation.split('\n').length, 1), 4)}
                       value={draftAnnotation}
                       onChange={(e) => setDraftAnnotation(e.target.value)}
                       onBlur={() => commitObjectRename(obj)}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') commitObjectRename(obj);
+                        // Enter inserts a newline (annotations may span
+                        // multiple lines); Escape cancels. Commit happens on
+                        // blur, matching the text-object edit popup.
                         if (e.key === 'Escape') {
+                          e.preventDefault();
                           setEditingObjectId(null);
                           setDraftAnnotation('');
                         }
                       }}
                       onClick={(e) => e.stopPropagation()}
-                      className="flex-1 bg-bg border border-border rounded px-1 py-0 text-xs text-text outline-none"
+                      className="flex-1 resize-none bg-bg border border-border rounded px-1 py-0 text-xs text-text outline-none"
                     />
                   ) : (
                     <span
                       className="truncate"
+                      title={obj.annotation}
                       onDoubleClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();

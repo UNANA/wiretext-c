@@ -135,7 +135,9 @@ export interface CanvasObject {
   currentPage?: number;
   totalPages?: number;
 
-  // For annotation
+  // For annotation. A free-form note shown/edited in the properties panel
+  // and as the object's title in the layers panel. May contain embedded
+  // newlines (issue #12); legacy single-line values read back unchanged.
   annotation?: string;
 }
 
