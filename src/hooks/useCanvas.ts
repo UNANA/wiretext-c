@@ -14,7 +14,12 @@ import {
   calculateGridSize,
   generateId,
 } from '../utils/boxDrawing';
-import { reorderLayersByDrop, type LayerDropPlacement } from '../utils/layerDragDrop';
+import {
+  reorderLayersByDrop,
+  reparentChildrenOnDelete,
+  migrateLegacyLayerParentIds,
+  type LayerDropPlacement,
+} from '../utils/layerDragDrop';
 import type {
   Grid,
   Tool,
@@ -98,7 +103,7 @@ export interface UseCanvasReturn {
   zoomViewport: (delta: number, centerX: number, centerY: number) => void;
   exportToText: (format?: ExportFormat) => string;
   ensureSpace: (col: number, row: number) => void;
-  loadObjects: (objs: CanvasObject[]) => void;
+  loadObjects: (objs: CanvasObject[], layers?: CanvasLayer[]) => void;
 
   // Undo/Redo
   undo: () => void;
@@ -119,6 +124,7 @@ export interface UseCanvasReturn {
   renameLayer: (layerId: string, name: string) => void;
   reorderLayer: (dragLayerId: string, targetLayerId: string, placement?: LayerDropPlacement) => void;
   setLayerParent: (layerId: string, parentId?: string) => void;
+  deleteLayer: (layerId: string) => void;
   arrangeSelectionLayer: (mode: 'toFront' | 'forward' | 'backward' | 'toBack') => void;
   alignSelection: (mode: 'left' | 'centerHorizontal' | 'right' | 'top' | 'centerVertical' | 'bottom') => void;
   distributeSelection: (axis: 'horizontal' | 'vertical') => void;
@@ -183,6 +189,11 @@ function normalizeStackOrder(list: CanvasObject[], preferredLayerOrder: Map<stri
   return normalized;
 }
 
+// Reconstructs each layer's name/order/objectCount from the objects that
+// belong to it. Layer hierarchy (parentId) is intentionally NOT derived
+// here: `layersState` is the single source of truth for parent/child
+// relationships, since deriving it from an arbitrary "first object of the
+// layer" was unreliable (see reorderLayer/setLayerParent below).
 function buildLayers(list: CanvasObject[]): CanvasLayer[] {
   const grouped = new Map<string, CanvasObject[]>();
   for (const obj of list.map(ensureLayerFields)) {
@@ -198,7 +209,6 @@ function buildLayers(list: CanvasObject[]): CanvasLayer[] {
       name: objectsInLayer[0]?.layerName || DEFAULT_LAYER_NAME,
       order: objectsInLayer[0]?.layerOrder ?? 0,
       objectCount: objectsInLayer.length,
-      parentId: objectsInLayer[0]?.layerParentId,
     }))
     .sort((a, b) => a.order - b.order);
 
@@ -610,7 +620,8 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
         name: fromState?.name ?? fromObjects?.name ?? `Layer ${idx + 1}`,
         order: fromState?.order ?? fromObjects?.order ?? idx,
         objectCount: fromObjects?.objectCount ?? 0,
-        parentId: fromObjects?.parentId ?? fromState?.parentId,
+        // layersState is the single source of truth for hierarchy.
+        parentId: fromState?.parentId,
       };
     });
 
@@ -1357,17 +1368,16 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     const reordered = reorderLayersByDrop(layers, dragLayerId, targetLayerId, placement, DEFAULT_LAYER_ID);
     if (!reordered) return;
     const orderMap = new Map<string, number>(reordered.map(layer => [layer.id, layer.order]));
-    const parentId = reordered.find(layer => layer.id === dragLayerId)?.parentId;
 
+    // layersState (via `reordered`) already carries the correct parentId for
+    // every layer involved; objects only need their layerOrder refreshed so
+    // stacking stays in sync with the new sibling order.
     setLayersState(reordered);
 
     pushHistory();
     setObjects(prev => normalizeStackOrder(prev.map(obj => ({
       ...obj,
       layerOrder: orderMap.get(obj.layerId ?? DEFAULT_LAYER_ID) ?? (obj.layerOrder ?? 0),
-      layerParentId: (obj.layerId ?? DEFAULT_LAYER_ID) === dragLayerId
-        ? parentId
-        : obj.layerParentId,
     })), orderMap));
   }, [layers, pushHistory]);
 
@@ -1384,13 +1394,36 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
 
     const current = byId.get(layerId);
     if (current?.parentId === parentId) return;
+    // Hierarchy lives solely in layersState now; objects don't need touching.
     setLayersState(prev => prev.map(layer => (
       layer.id === layerId ? { ...layer, parentId } : layer
     )));
     pushHistory();
+  }, [layers, pushHistory]);
+
+  // Deletes a layer explicitly (layers are first-class state now — nothing
+  // auto-deletes an empty layer, so this is the only way one goes away).
+  // Anything that referenced this layer is re-parented one level up instead
+  // of being orphaned:
+  //  - child layers (parentId === layerId) adopt this layer's own parent
+  //  - objects still on this layer move to this layer's parent (or the
+  //    default root layer if this layer had none)
+  const deleteLayer = useCallback((layerId: string) => {
+    if (layerId === DEFAULT_LAYER_ID) return;
+    const target = layers.find(layer => layer.id === layerId);
+    if (!target) return;
+
+    const fallbackParentId = target.parentId;
+    const fallbackLayer = layers.find(layer => layer.id === fallbackParentId);
+    const fallbackLayerId = fallbackLayer?.id ?? DEFAULT_LAYER_ID;
+    const fallbackLayerName = fallbackLayer?.name ?? DEFAULT_LAYER_NAME;
+    const fallbackLayerOrder = fallbackLayer?.order ?? 0;
+
+    pushHistory();
+    setLayersState(prev => reparentChildrenOnDelete(prev, layerId));
     setObjects(prev => normalizeStackOrder(prev.map(obj => (
       (obj.layerId ?? DEFAULT_LAYER_ID) === layerId
-        ? { ...obj, layerParentId: parentId }
+        ? { ...obj, layerId: fallbackLayerId, layerName: fallbackLayerName, layerOrder: fallbackLayerOrder }
         : obj
     ))));
   }, [layers, pushHistory]);
@@ -1495,13 +1528,55 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     repositionSelection(deltas);
   }, [repositionSelection, selectedObjects]);
 
-  // --- Load objects (for share URL) ---
-  const loadObjects = useCallback((objs: CanvasObject[]) => {
+  // --- Load objects (for share URL / project file) ---
+  // `savedLayers` is the persisted layersState from a project file/share URL
+  // saved by a build that already writes it. When it's absent — a legacy
+  // share-URL payload, or a project file saved before layer hierarchy was
+  // persisted separately — layer names/order/hierarchy are reconstructed
+  // from the objects as before, migrating hierarchy once from the legacy
+  // per-object `layerParentId` field if the raw data still has it.
+  //
+  // `savedLayers` is also the only way an *empty* layer (objectCount 0)
+  // survives a round trip: `buildLayers` only sees layers that own at least
+  // one object, so any layer ids present solely in `savedLayers` are merged
+  // in here explicitly rather than being silently dropped.
+  const loadObjects = useCallback((objs: CanvasObject[], savedLayers?: CanvasLayer[]) => {
     const normalized = normalizeStackOrder(syncConnectorLines(objs));
     setObjects(normalized);
-    const loadedLayers = buildLayers(normalized)
+
+    const reconstructed = buildLayers(normalized);
+    const reconstructedById = new Map(reconstructed.map(layer => [layer.id, layer]));
+
+    let loadedLayers: CanvasLayer[];
+    if (savedLayers && savedLayers.length > 0) {
+      const savedById = new Map(savedLayers.map(layer => [layer.id, layer]));
+      const mergedIds = new Set<string>([
+        ...savedLayers.map(layer => layer.id),
+        ...reconstructed.map(layer => layer.id),
+      ]);
+      loadedLayers = [...mergedIds].map((id) => {
+        const saved = savedById.get(id);
+        const fromObjects = reconstructedById.get(id);
+        return {
+          id,
+          name: saved?.name ?? fromObjects?.name ?? DEFAULT_LAYER_NAME,
+          order: saved?.order ?? fromObjects?.order ?? 0,
+          objectCount: fromObjects?.objectCount ?? 0,
+          parentId: saved?.parentId,
+        };
+      });
+    } else {
+      const legacyParents = migrateLegacyLayerParentIds(objs, DEFAULT_LAYER_ID);
+      loadedLayers = reconstructed.map(layer => ({
+        ...layer,
+        parentId: legacyParents.get(layer.id),
+      }));
+    }
+
+    loadedLayers = loadedLayers
       .sort((a, b) => a.order - b.order)
       .map((layer, order) => ({ ...layer, order }));
+
     setLayersState(
       loadedLayers.length > 0
         ? loadedLayers
@@ -2241,6 +2316,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     renameLayer,
     reorderLayer,
     setLayerParent,
+    deleteLayer,
     arrangeSelectionLayer,
     alignSelection,
     distributeSelection,
