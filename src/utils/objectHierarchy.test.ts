@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { CanvasObject } from '../types';
 import {
+  buildPaintOrder,
   canReparentObject,
   collectObjectDescendants,
   flattenObjectTree,
+  normalizeSiblingOrder,
+  sortObjectsByStackOrder,
   remapParentIdsForClones,
   removeObjectsAndReparentChildren,
   resolveObjectDropParent,
@@ -185,5 +188,82 @@ describe('flattenObjectTree', () => {
     const result = flattenObjectTree(cyclic);
 
     expect(result.map(row => row.object.id).sort()).toEqual(['a', 'b']);
+  });
+});
+
+describe('buildPaintOrder / sortObjectsByStackOrder', () => {
+  function node(id: string, zIndex: number, parentId?: string, type: CanvasObject['type'] = 'box'): CanvasObject {
+    return { ...makeObject(id, parentId), zIndex, type };
+  }
+
+  it('orders depth-first: children paint directly above their parent, before the next sibling', () => {
+    const objects = [
+      node('layer-1', 0, undefined, 'layer'),
+      node('a', 0, 'layer-1'),
+      node('a1', 0, 'a'),
+      node('b', 1, 'layer-1'),
+    ];
+    const sorted = sortObjectsByStackOrder(objects).map(obj => obj.id);
+    expect(sorted).toEqual(['layer-1', 'a', 'a1', 'b']);
+  });
+
+  it('orders root layers by zIndex, whole subtree after whole subtree', () => {
+    const objects = [
+      node('layer-2', 1, undefined, 'layer'),
+      node('x', 0, 'layer-2'),
+      node('layer-1', 0, undefined, 'layer'),
+      node('y', 0, 'layer-1'),
+    ];
+    const sorted = sortObjectsByStackOrder(objects).map(obj => obj.id);
+    expect(sorted).toEqual(['layer-1', 'y', 'layer-2', 'x']);
+  });
+
+  it('keeps unreachable nodes (parent cycles) at the end instead of dropping them', () => {
+    const objects = [
+      node('a', 0),
+      node('c1', 0, 'c2'),
+      node('c2', 1, 'c1'),
+    ];
+    const order = buildPaintOrder(objects);
+    expect(order.size).toBe(3);
+    expect(order.get('a')).toBe(0);
+  });
+});
+
+describe('normalizeSiblingOrder', () => {
+  it('reassigns dense zIndex per sibling group, preserving relative order', () => {
+    const objects = [
+      { ...makeObject('a', 'p'), zIndex: 5 },
+      { ...makeObject('b', 'p'), zIndex: 2 },
+      { ...makeObject('p'), zIndex: 7 },
+      { ...makeObject('q'), zIndex: 3 },
+    ];
+    const result = normalizeSiblingOrder(objects);
+    const byId = new Map(result.map(obj => [obj.id, obj]));
+    expect(byId.get('b')!.zIndex).toBe(0);
+    expect(byId.get('a')!.zIndex).toBe(1);
+    expect(byId.get('q')!.zIndex).toBe(0);
+    expect(byId.get('p')!.zIndex).toBe(1);
+  });
+
+  it('groups nodes with a missing parent at the root', () => {
+    const objects = [
+      { ...makeObject('a', 'missing'), zIndex: 9 },
+      { ...makeObject('b'), zIndex: 1 },
+    ];
+    const result = normalizeSiblingOrder(objects);
+    const byId = new Map(result.map(obj => [obj.id, obj]));
+    expect(byId.get('b')!.zIndex).toBe(0);
+    expect(byId.get('a')!.zIndex).toBe(1);
+  });
+
+  it('returns identical object references when nothing changes', () => {
+    const objects = [
+      { ...makeObject('a'), zIndex: 0 },
+      { ...makeObject('b'), zIndex: 1 },
+    ];
+    const result = normalizeSiblingOrder(objects);
+    expect(result[0]).toBe(objects[0]);
+    expect(result[1]).toBe(objects[1]);
   });
 });

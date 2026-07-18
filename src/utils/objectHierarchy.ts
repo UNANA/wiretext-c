@@ -185,3 +185,55 @@ export function flattenObjectTree<T extends ObjectNode>(
   }
   return flattened;
 }
+
+type OrderedNode = Pick<CanvasObject, 'id' | 'parentId' | 'zIndex'>;
+
+/**
+ * Paint order for the unified tree: depth-first traversal with siblings
+ * ordered by zIndex, so a node always paints above its parent and the layers
+ * panel's display order equals the canvas stacking order. Returns a
+ * position-per-id map; unreachable nodes (corrupt parent cycles) land at the
+ * end, mirroring flattenObjectTree.
+ */
+export function buildPaintOrder(objects: readonly OrderedNode[]): Map<string, number> {
+  const rows = flattenObjectTree([...objects].sort((a, b) => a.zIndex - b.zIndex));
+  return new Map(rows.map((row, index) => [row.object.id, index]));
+}
+
+/**
+ * Returns the objects sorted bottom-to-top by paint order (see
+ * buildPaintOrder). Successor of the old layerOrder/zIndex two-step
+ * comparator, which needed per-object denormalized layer fields.
+ */
+export function sortObjectsByStackOrder<T extends OrderedNode>(objects: readonly T[]): T[] {
+  const order = buildPaintOrder(objects);
+  return [...objects].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+}
+
+/**
+ * Reassigns zIndex to 0..n-1 within each sibling group (nodes sharing a
+ * parent; nodes with a missing parent group at the root), preserving the
+ * current relative order. zIndex is only meaningful among siblings — the
+ * global stacking comes from the tree traversal — so run this after any
+ * structural mutation to keep the values dense and comparable.
+ */
+export function normalizeSiblingOrder<T extends OrderedNode>(objects: readonly T[]): T[] {
+  const ids = new Set(objects.map(obj => obj.id));
+  const byParent = new Map<string | undefined, T[]>();
+  for (const obj of objects) {
+    const key = obj.parentId && ids.has(obj.parentId) ? obj.parentId : undefined;
+    byParent.set(key, [...(byParent.get(key) ?? []), obj]);
+  }
+
+  const reindexed = new Map<string, number>();
+  for (const siblings of byParent.values()) {
+    [...siblings]
+      .sort((a, b) => a.zIndex - b.zIndex)
+      .forEach((obj, index) => reindexed.set(obj.id, index));
+  }
+
+  return objects.map(obj => {
+    const zIndex = reindexed.get(obj.id);
+    return zIndex === undefined || zIndex === obj.zIndex ? obj : { ...obj, zIndex };
+  });
+}
