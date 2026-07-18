@@ -4,6 +4,7 @@ interface ActionButtonsProps {
   onClear: () => void;
   onSave: () => void;
   onLoad: () => void;
+  onImport: () => void;
   onExport: () => void;
   onShare: () => void;
   onSettings: () => void;
@@ -13,6 +14,7 @@ const ActionButtons: React.FC<ActionButtonsProps> = ({
   onClear,
   onSave,
   onLoad,
+  onImport,
   onExport,
   onShare,
   onSettings,
@@ -35,9 +37,16 @@ const ActionButtons: React.FC<ActionButtonsProps> = ({
       <button
         className="rounded border border-border bg-surface px-3 py-1.5 text-text-dim text-xs transition-colors hover:bg-surface-hover hover:text-text"
         onClick={onLoad}
-        title="Load project (Ctrl+O)"
+        title="Load project, replacing the current canvas (Ctrl+O)"
       >
         Load
+      </button>
+      <button
+        className="rounded border border-border bg-surface px-3 py-1.5 text-text-dim text-xs transition-colors hover:bg-surface-hover hover:text-text"
+        onClick={onImport}
+        title="Import project, adding to the current canvas (Ctrl+Shift+O)"
+      >
+        Import
       </button>
       <button
         className="rounded border border-border bg-surface px-3 py-1.5 text-text-dim text-xs transition-colors hover:bg-surface-hover hover:text-text"

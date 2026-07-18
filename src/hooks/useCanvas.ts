@@ -27,6 +27,7 @@ import {
   resolveObjectDropParent,
   sanitizeObjectParents,
 } from '../utils/objectHierarchy';
+import { remapObjectsAndLayersForAdditiveLoad } from '../utils/loadMerge';
 import type {
   Grid,
   Tool,
@@ -111,6 +112,7 @@ export interface UseCanvasReturn {
   exportToText: (format?: ExportFormat) => string;
   ensureSpace: (col: number, row: number) => void;
   loadObjects: (objs: CanvasObject[], layers?: CanvasLayer[]) => void;
+  addObjects: (objs: CanvasObject[], layers?: CanvasLayer[]) => void;
 
   // Undo/Redo
   undo: () => void;
@@ -223,6 +225,50 @@ function buildLayers(list: CanvasObject[]): CanvasLayer[] {
     return [{ id: DEFAULT_LAYER_ID, name: DEFAULT_LAYER_NAME, order: 0, objectCount: 0 }];
   }
   return fromObjects;
+}
+
+// Resolves the layer list for a batch of loaded objects: prefers the
+// persisted `savedLayers` (name/order/hierarchy), falling back to
+// reconstructing/migrating from the objects themselves for legacy payloads
+// that predate persisted layer state. Shared by loadObjects (replace) and
+// addObjects (merge) so both interpret a project file's layers identically.
+function resolveIncomingLayers(
+  rawObjects: CanvasObject[],
+  normalizedObjects: CanvasObject[],
+  savedLayers?: CanvasLayer[],
+): CanvasLayer[] {
+  const reconstructed = buildLayers(normalizedObjects);
+  const reconstructedById = new Map(reconstructed.map(layer => [layer.id, layer]));
+
+  let resolved: CanvasLayer[];
+  if (savedLayers && savedLayers.length > 0) {
+    const savedById = new Map(savedLayers.map(layer => [layer.id, layer]));
+    const mergedIds = new Set<string>([
+      ...savedLayers.map(layer => layer.id),
+      ...reconstructed.map(layer => layer.id),
+    ]);
+    resolved = [...mergedIds].map((id) => {
+      const saved = savedById.get(id);
+      const fromObjects = reconstructedById.get(id);
+      return {
+        id,
+        name: saved?.name ?? fromObjects?.name ?? DEFAULT_LAYER_NAME,
+        order: saved?.order ?? fromObjects?.order ?? 0,
+        objectCount: fromObjects?.objectCount ?? 0,
+        parentId: saved?.parentId,
+      };
+    });
+  } else {
+    const legacyParents = migrateLegacyLayerParentIds(rawObjects, DEFAULT_LAYER_ID);
+    resolved = reconstructed.map(layer => ({
+      ...layer,
+      parentId: legacyParents.get(layer.id),
+    }));
+  }
+
+  return resolved
+    .sort((a, b) => a.order - b.order)
+    .map((layer, order) => ({ ...layer, order }));
 }
 
 export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvasReturn {
@@ -1593,38 +1639,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     const normalized = normalizeStackOrder(syncConnectorLines(sanitizeObjectParents(objs)));
     setObjects(normalized);
 
-    const reconstructed = buildLayers(normalized);
-    const reconstructedById = new Map(reconstructed.map(layer => [layer.id, layer]));
-
-    let loadedLayers: CanvasLayer[];
-    if (savedLayers && savedLayers.length > 0) {
-      const savedById = new Map(savedLayers.map(layer => [layer.id, layer]));
-      const mergedIds = new Set<string>([
-        ...savedLayers.map(layer => layer.id),
-        ...reconstructed.map(layer => layer.id),
-      ]);
-      loadedLayers = [...mergedIds].map((id) => {
-        const saved = savedById.get(id);
-        const fromObjects = reconstructedById.get(id);
-        return {
-          id,
-          name: saved?.name ?? fromObjects?.name ?? DEFAULT_LAYER_NAME,
-          order: saved?.order ?? fromObjects?.order ?? 0,
-          objectCount: fromObjects?.objectCount ?? 0,
-          parentId: saved?.parentId,
-        };
-      });
-    } else {
-      const legacyParents = migrateLegacyLayerParentIds(objs, DEFAULT_LAYER_ID);
-      loadedLayers = reconstructed.map(layer => ({
-        ...layer,
-        parentId: legacyParents.get(layer.id),
-      }));
-    }
-
-    loadedLayers = loadedLayers
-      .sort((a, b) => a.order - b.order)
-      .map((layer, order) => ({ ...layer, order }));
+    const loadedLayers = resolveIncomingLayers(objs, normalized, savedLayers);
 
     setLayersState(
       loadedLayers.length > 0
@@ -1637,6 +1652,42 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     // Preserve fixed preset canvas size when loading.
     setGridSize({ cols: INITIAL_COLS, rows: INITIAL_ROWS });
   }, [syncConnectorLines]);
+
+  // --- Add objects (additive/merge load) ---
+  // Same source data as loadObjects (a project file's objects + optional
+  // layers) but merges into the current canvas instead of replacing it.
+  // Loaded ids that collide with ids already on the canvas are regenerated,
+  // and every reference to the old id (object parentId/layerId, connector
+  // bindings, layer parentId) is rewritten to follow — see
+  // remapObjectsAndLayersForAdditiveLoad. Goes through pushHistory like any
+  // other mutation so the whole merge undoes in one step.
+  const addObjects = useCallback((objs: CanvasObject[], savedLayers?: CanvasLayer[]) => {
+    const sanitized = sanitizeObjectParents(objs);
+    const incomingLayers = resolveIncomingLayers(objs, sanitized, savedLayers);
+
+    const existingObjectIds = new Set(objects.map(obj => obj.id));
+    const existingLayerIds = new Set(layersState.map(layer => layer.id));
+
+    const { objects: remappedObjects, layers: remappedLayers } = remapObjectsAndLayersForAdditiveLoad(
+      sanitized,
+      incomingLayers,
+      existingObjectIds,
+      existingLayerIds,
+      generateId,
+    );
+
+    pushHistory();
+    setObjects(prev => normalizeStackOrder(syncConnectorLines([...prev, ...remappedObjects])));
+    setLayersState(prev => {
+      const baseOrder = prev.length > 0 ? Math.max(...prev.map(layer => layer.order)) + 1 : 0;
+      return [
+        ...prev,
+        ...remappedLayers.map((layer, index) => ({ ...layer, order: baseOrder + index })),
+      ];
+    });
+    // Select the newly merged content so it's obvious what the load added.
+    setSelectedIds(new Set(remappedObjects.map(obj => obj.id)));
+  }, [objects, layersState, pushHistory, syncConnectorLines]);
 
   const handleCellMouseDown = useCallback((
     col: number,
@@ -2353,6 +2404,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     exportToText,
     ensureSpace,
     loadObjects,
+    addObjects,
     undo,
     redo,
     canUndo,
