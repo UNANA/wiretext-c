@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  getLayerDropDepth,
+  getLayerDropEdgePlacement,
   getLayerDropPlacement,
   getLayerPanelDragPayload,
   LAYER_PANEL_DRAG_TYPE,
@@ -31,6 +33,23 @@ describe('layer panel drag payload', () => {
     dataTransfer.setData('text/plain', 'not wiretext drag data');
 
     expect(getLayerPanelDragPayload(dataTransfer)).toBeNull();
+  });
+});
+
+describe('horizontal layer drop depth', () => {
+  it.each([
+    [110, 0],
+    [126, 1],
+    [140, 2],
+    [200, 3],
+    [80, 0],
+  ])('maps pointer x %i to depth %i', (clientX, expected) => {
+    expect(getLayerDropDepth(clientX, 96, 3)).toBe(expected);
+  });
+
+  it('uses the vertical midpoint only to choose before or after', () => {
+    expect(getLayerDropEdgePlacement(109, 100, 20)).toBe('before');
+    expect(getLayerDropEdgePlacement(110, 100, 20)).toBe('after');
   });
 });
 

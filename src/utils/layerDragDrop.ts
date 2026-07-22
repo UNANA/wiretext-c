@@ -38,3 +38,24 @@ export function getLayerDropPlacement(
   if (position > 0.75) return 'after';
   return 'inside';
 }
+
+export function getLayerDropDepth(
+  clientX: number,
+  left: number,
+  maximumDepth: number,
+  baseIndent = 14,
+  depthIndent = 14,
+): number {
+  if (depthIndent <= 0) return 0;
+  const depth = Math.round((clientX - left - baseIndent) / depthIndent);
+  return Math.max(0, Math.min(maximumDepth, depth));
+}
+
+export function getLayerDropEdgePlacement(
+  clientY: number,
+  top: number,
+  height: number,
+): Exclude<LayerDropPlacement, 'inside'> {
+  if (height <= 0) return 'after';
+  return clientY < top + height / 2 ? 'before' : 'after';
+}
