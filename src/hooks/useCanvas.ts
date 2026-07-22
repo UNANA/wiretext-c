@@ -1299,6 +1299,20 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     reorderNodeByDrop(dragLayerId, targetLayerId, placement);
   }, [reorderNodeByDrop]);
 
+  const moveNodeToRootEnd = useCallback((nodeId: string) => {
+    if (!objects.some(obj => obj.id === nodeId)) return;
+    pushHistory();
+    setObjects(prev => {
+      const lastRootZIndex = prev
+        .filter(obj => obj.id !== nodeId && !obj.parentId)
+        .reduce((maximum, obj) => Math.max(maximum, obj.zIndex), -1);
+      return normalizeSiblingOrder(prev.map(obj => (
+        obj.id === nodeId ? { ...obj, parentId: undefined, zIndex: lastRootZIndex + 1 } : obj
+      )));
+    });
+    setSelectedIds(new Set([nodeId]));
+  }, [objects, pushHistory]);
+
   const renameLayer = useCallback((layerId: string, name: string) => {
     const trimmed = name.trim();
     if (!trimmed) return;
@@ -2219,6 +2233,7 @@ export function useCanvas(options?: { smartGuidesEnabled?: boolean }): UseCanvas
     reorderObjectByDrop,
     renameLayer,
     reorderLayer,
+    moveNodeToRootEnd,
     setLayerParent,
     deleteLayer,
     arrangeSelectionLayer,
