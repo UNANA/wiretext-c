@@ -95,6 +95,7 @@ function App() {
     reorderObjectByDrop,
     renameLayer,
     reorderLayer,
+    moveNodeToRootEnd,
     setLayerParent,
     deleteLayer,
     deleteObject,
@@ -510,6 +511,7 @@ function App() {
                 onReorderObjectByDrop={reorderObjectByDrop}
                 onRenameLayer={renameLayer}
                 onReorderLayer={reorderLayer}
+                onMoveNodeToRootEnd={moveNodeToRootEnd}
                 onSetLayerParent={setLayerParent}
                 onDeleteLayer={deleteLayer}
                 onDeleteObject={deleteObject}

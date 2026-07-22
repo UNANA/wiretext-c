@@ -1,7 +1,8 @@
 import React, { useMemo, useRef, useState } from 'react';
 import type { CanvasObject } from '../types';
 import {
-  getLayerDropPlacement,
+  getLayerDropDepth,
+  getLayerDropEdgePlacement,
   getLayerPanelDragPayload,
   setLayerPanelDragPayload,
   type LayerDropPlacement,
@@ -22,6 +23,7 @@ interface LayersPanelProps {
   onReorderObjectByDrop: (dragObjectId: string, targetObjectId: string, placement?: LayerDropPlacement) => void;
   onRenameLayer: (layerId: string, name: string) => void;
   onReorderLayer: (dragLayerId: string, targetLayerId: string, placement?: LayerDropPlacement) => void;
+  onMoveNodeToRootEnd: (nodeId: string) => void;
   onSetLayerParent: (layerId: string, parentId?: string) => void;
   onDeleteLayer: (layerId: string) => void;
   onDeleteObject: (objectId: string) => void;
@@ -50,6 +52,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
   onReorderObjectByDrop,
   onRenameLayer,
   onReorderLayer,
+  onMoveNodeToRootEnd,
   onSetLayerParent,
   onDeleteLayer,
   onDeleteObject,
@@ -157,20 +160,26 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
     return index > 0 ? siblings[index - 1].id : undefined;
   };
 
-  const handleRowDragOver = (event: React.DragEvent, node: CanvasObject) => {
+  const getDropAnchor = (node: CanvasObject, depth: number, desiredDepth: number) => {
+    if (desiredDepth > depth) return { node, placement: 'inside' as const };
+    const rowIndex = rows.findIndex(row => row.object.id === node.id);
+    for (let index = rowIndex; index >= 0; index -= 1) {
+      if (rows[index].depth === desiredDepth) return { node: rows[index].object };
+    }
+    return { node };
+  };
+
+  const handleRowDragOver = (event: React.DragEvent, node: CanvasObject, depth: number) => {
     event.preventDefault();
     event.stopPropagation();
     event.dataTransfer.dropEffect = 'move';
     const current = draggingRef.current;
     if (!current || current.id === node.id) return;
-    setDropTargetId(node.id);
-    if (current.kind === 'object' && isLayerObject(node)) {
-      // Dropping an object anywhere on a layer row moves it into that layer.
-      setDropPlacement('inside');
-    } else {
-      const rect = event.currentTarget.getBoundingClientRect();
-      setDropPlacement(getLayerDropPlacement(event.clientY, rect.top, rect.height));
-    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const desiredDepth = getLayerDropDepth(event.clientX, rect.left, depth + 1);
+    const anchor = getDropAnchor(node, depth, desiredDepth);
+    setDropTargetId(anchor.node.id);
+    setDropPlacement(anchor.placement ?? getLayerDropEdgePlacement(event.clientY, rect.top, rect.height));
   };
 
   const handleRowDrop = (event: React.DragEvent, node: CanvasObject) => {
@@ -181,11 +190,12 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
       finishDrag();
       return;
     }
+    const target = objects.find(object => object.id === dropTargetId) ?? node;
     if (payload.type === 'object') {
-      if (isLayerObject(node)) onMoveObjectToLayer(payload.id, node.id);
-      else onReorderObjectByDrop(payload.id, node.id, dropPlacement);
+      if (isLayerObject(target) && dropPlacement === 'inside') onMoveObjectToLayer(payload.id, target.id);
+      else onReorderObjectByDrop(payload.id, target.id, dropPlacement);
     } else {
-      onReorderLayer(payload.id, node.id, dropPlacement);
+      onReorderLayer(payload.id, target.id, dropPlacement);
     }
     finishDrag();
   };
@@ -202,7 +212,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
         key={layer.id}
         draggable={editingLayerId !== layer.id}
         onDragStart={(e) => startDrag(e, layer)}
-        onDragOver={(e) => handleRowDragOver(e, layer)}
+        onDragOver={(e) => handleRowDragOver(e, layer, depth)}
         onDrop={(e) => handleRowDrop(e, layer)}
         onDragEnd={finishDrag}
         className={`flex w-full items-center gap-1.5 px-3 py-1 text-left text-xs transition-colors ${activeLayerId === layer.id ? 'bg-accent/20 text-text' : 'text-text-dim hover:bg-surface'
@@ -293,7 +303,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
         key={obj.id}
         draggable={editingObjectId !== obj.id}
         onDragStart={(e) => startDrag(e, obj)}
-        onDragOver={(e) => handleRowDragOver(e, obj)}
+        onDragOver={(e) => handleRowDragOver(e, obj, depth)}
         onDrop={(e) => handleRowDrop(e, obj)}
         onDragEnd={finishDrag}
         onClick={(event) => handleObjectSelection(event, obj.id)}
@@ -385,7 +395,21 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto py-1">
+      <div
+        className={`flex-1 overflow-y-auto py-1 ${dropTargetId === '__root-end__' ? 'border-b-2 border-accent' : ''}`}
+        onDragOver={(event) => {
+          if (!draggingRef.current) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+          setDropTargetId('__root-end__');
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          const payload = getLayerPanelDragPayload(event.dataTransfer);
+          if (payload) onMoveNodeToRootEnd(payload.id);
+          finishDrag();
+        }}
+      >
         {rows.map(({ object: node, depth }) => (
           isLayerObject(node) ? renderLayerRow(node, depth) : renderObjectRow(node, depth)
         ))}
