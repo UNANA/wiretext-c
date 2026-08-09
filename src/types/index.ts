@@ -1,4 +1,4 @@
-export type BoxStyle = 'single' | 'double' | 'rounded' | 'heavy';
+export type BoxStyle = 'single' | 'double' | 'rounded' | 'heavy' | 'none';
 
 export type Tool =
   | 'select'
