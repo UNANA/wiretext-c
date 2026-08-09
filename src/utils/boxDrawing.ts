@@ -114,9 +114,16 @@ export function drawHLine(grid: Grid, col: number, row: number, width: number): 
   }
 }
 
+type BoxChars = (typeof i)[keyof typeof i];
+
+function getBoxChars(style: BoxStyle): BoxChars | null {
+  if (style === 'none') return null;
+  return i[style];
+}
+
 // Draw box border (x function)
 export function drawBoxBorder(grid: Grid, col: number, row: number, width: number, height: number, style: BoxStyle): void {
-  const chars = i[style];
+  const chars = getBoxChars(style);
   if (!chars || width < 2 || height < 2) return;
 
   // Corners
@@ -213,10 +220,12 @@ export function drawModalCard(grid: Grid, col: number, row: number, width: numbe
   // Horizontal line below title
   drawHLine(grid, col + 1, row + 2, width - 2);
 
-  // Tee connections for the line
-  const chars = i[style];
-  drawChar(grid, col, row + 2, chars.teeRight);
-  drawChar(grid, col + width - 1, row + 2, chars.teeLeft);
+  // Tee connections for the line (only when a border is drawn)
+  const chars = getBoxChars(style);
+  if (chars) {
+    drawChar(grid, col, row + 2, chars.teeRight);
+    drawChar(grid, col + width - 1, row + 2, chars.teeLeft);
+  }
 
   // Close button
   if (hasClose) {
@@ -255,14 +264,16 @@ export function drawTable(grid: Grid, col: number, row: number, width: number, h
 // Browser helper
 export function drawBrowser(grid: Grid, col: number, row: number, width: number, height: number, label: string, style: BoxStyle): void {
   if (height < 5) return;
-  const chars = i[style];
+  const chars = getBoxChars(style);
 
   // Address bar line
   drawHLine(grid, col + 1, row + 2, width - 2);
 
-  // Tee connections
-  drawChar(grid, col, row + 2, chars.teeRight);
-  drawChar(grid, col + width - 1, row + 2, chars.teeLeft);
+  // Tee connections (only when a border is drawn)
+  if (chars) {
+    drawChar(grid, col, row + 2, chars.teeRight);
+    drawChar(grid, col + width - 1, row + 2, chars.teeLeft);
+  }
 
   // Navigation buttons
   drawText(grid, col + 2, row + 1, '◄ ► ⟳');
@@ -329,16 +340,19 @@ export function drawToggle(grid: Grid, col: number, row: number, _width: number,
 
 // Accordion helper
 export function drawAccordion(grid: Grid, col: number, row: number, width: number, height: number, items: string[], style: BoxStyle): void {
-  const chars = i[style];
+  const chars = getBoxChars(style);
+  const horizontal = chars?.horizontal ?? a.horizontal;
   let currentRow = row;
   for (let idx = 0; idx < items.length && currentRow < row + height - 1; idx++) {
     // Draw separator line
     if (idx > 0 && currentRow < row + height) {
       for (let c = 1; c < width - 1; c++) {
-        setChar(grid, col + c, currentRow, chars.horizontal);
+        setChar(grid, col + c, currentRow, horizontal);
       }
-      setChar(grid, col, currentRow, chars.teeRight);
-      setChar(grid, col + width - 1, currentRow, chars.teeLeft);
+      if (chars) {
+        setChar(grid, col, currentRow, chars.teeRight);
+        setChar(grid, col + width - 1, currentRow, chars.teeLeft);
+      }
       currentRow++;
     }
     // Draw item
@@ -359,15 +373,18 @@ export function drawAccordion(grid: Grid, col: number, row: number, width: numbe
 
 // Sidebar helper
 export function drawSidebar(grid: Grid, col: number, row: number, width: number, height: number, items: string[], style: BoxStyle): void {
-  const chars = i[style];
+  const chars = getBoxChars(style);
+  const horizontal = chars?.horizontal ?? a.horizontal;
   // Draw hamburger menu icon
   drawText(grid, col + 2, row + 1, '≡ Menu');
   // Separator
   for (let c = 1; c < width - 1; c++) {
-    setChar(grid, col + c, row + 2, chars.horizontal);
+    setChar(grid, col + c, row + 2, horizontal);
   }
-  setChar(grid, col, row + 2, chars.teeRight);
-  setChar(grid, col + width - 1, row + 2, chars.teeLeft);
+  if (chars) {
+    setChar(grid, col, row + 2, chars.teeRight);
+    setChar(grid, col + width - 1, row + 2, chars.teeLeft);
+  }
   // Menu items
   for (let idx = 0; idx < items.length && row + 3 + idx < row + height - 1; idx++) {
     const text = `› ${items[idx]}`;
@@ -402,17 +419,20 @@ export function drawBreadcrumb(grid: Grid, col: number, row: number, width: numb
 
 // Dropdown helper
 export function drawDropdown(grid: Grid, col: number, row: number, width: number, height: number, items: string[], style: BoxStyle): void {
-  const chars = i[style];
+  const chars = getBoxChars(style);
+  const horizontal = chars?.horizontal ?? a.horizontal;
   // Header row with arrow
   const midRow = row + Math.floor(1);
   drawText(grid, col + 2, midRow, (items[0] || 'Option') + '  ▾');
   // Separator
   if (height > 3) {
     for (let c = 1; c < width - 1; c++) {
-      setChar(grid, col + c, row + 2, chars.horizontal);
+      setChar(grid, col + c, row + 2, horizontal);
     }
-    setChar(grid, col, row + 2, chars.teeRight);
-    setChar(grid, col + width - 1, row + 2, chars.teeLeft);
+    if (chars) {
+      setChar(grid, col, row + 2, chars.teeRight);
+      setChar(grid, col + width - 1, row + 2, chars.teeLeft);
+    }
     // Items
     for (let idx = 1; idx < items.length && row + 2 + idx < row + height - 1; idx++) {
       drawText(grid, col + 2, row + 2 + idx, items[idx].slice(0, width - 4));
@@ -439,16 +459,19 @@ export function drawStepper(grid: Grid, col: number, row: number, width: number,
 
 // Calendar helper
 export function drawCalendar(grid: Grid, col: number, row: number, width: number, height: number, style: BoxStyle): void {
-  const chars = i[style];
+  const chars = getBoxChars(style);
+  const horizontal = chars?.horizontal ?? a.horizontal;
   // Month header
   drawText(grid, col + 2, row + 1, '◄  Month 2026  ►');
   // Separator
   if (height > 4) {
     for (let c = 1; c < width - 1; c++) {
-      setChar(grid, col + c, row + 2, chars.horizontal);
+      setChar(grid, col + c, row + 2, horizontal);
     }
-    setChar(grid, col, row + 2, chars.teeRight);
-    setChar(grid, col + width - 1, row + 2, chars.teeLeft);
+    if (chars) {
+      setChar(grid, col, row + 2, chars.teeRight);
+      setChar(grid, col + width - 1, row + 2, chars.teeLeft);
+    }
     // Day headers
     drawText(grid, col + 1, row + 3, 'Su Mo Tu We Th Fr Sa');
     // Day numbers

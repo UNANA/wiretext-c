@@ -18,6 +18,7 @@ const STYLE_OPTIONS: { value: BoxStyle; label: string; preview: string }[] = [
   { value: 'double', label: 'Double', preview: '╔═╗' },
   { value: 'rounded', label: 'Rounded', preview: '╭─╮' },
   { value: 'heavy', label: 'Heavy', preview: '┏━┓' },
+  { value: 'none', label: 'None', preview: ' · ' },
 ];
 
 const FILL_OPTIONS = [
@@ -165,7 +166,7 @@ const MultipleObjectProperties: React.FC<MultipleObjectPropertiesProps> = ({ obj
       {allBordered && (
         <div>
           <label className="block text-2xs text-text-dim mb-1">Border Style</label>
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-1">
             {STYLE_OPTIONS.map(style => (
               <button
                 key={style.value}
@@ -430,7 +431,7 @@ const SingleObjectProperties: React.FC<SingleObjectPropertiesProps> = ({
       {canHaveBorder && (
         <div>
           <label className="block text-2xs text-text-dim mb-1">Border Style</label>
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-1">
             {STYLE_OPTIONS.map(style => (
               <button
                 key={style.value}
