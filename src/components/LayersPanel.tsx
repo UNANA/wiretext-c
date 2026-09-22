@@ -7,7 +7,7 @@ import {
   setLayerPanelDragPayload,
   type LayerDropPlacement,
 } from '../utils/layerDragDrop';
-import { flattenObjectTree } from '../utils/objectHierarchy';
+import { collectObjectDescendants, flattenObjectTree } from '../utils/objectHierarchy';
 import { DEFAULT_LAYER_ID, findLayerAncestorId, isLayerObject } from '../utils/layerMigration';
 import { getObjectTitle } from '../utils/objectLabel';
 
@@ -100,6 +100,36 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
     }
     return counts;
   }, [objects]);
+
+  // Non-layer objects anywhere under each layer. Clicking a layer row
+  // selects them so the whole layer can be dragged / nudged on the canvas
+  // as one selection (Issue #13).
+  const objectIdsByLayer = useMemo(() => {
+    const result = new Map<string, string[]>();
+    for (const layer of objects.filter(isLayerObject)) {
+      const descendants = collectObjectDescendants(objects, [layer.id]);
+      result.set(layer.id, objects
+        .filter(obj => descendants.has(obj.id) && !isLayerObject(obj))
+        .map(obj => obj.id));
+    }
+    return result;
+  }, [objects]);
+
+  const isLayerSelected = (layerId: string) => {
+    const ids = objectIdsByLayer.get(layerId) ?? [];
+    return ids.length > 0 && ids.every(id => selectedIds.has(id));
+  };
+
+  const handleLayerSelection = (event: React.MouseEvent, layerId: string) => {
+    const addToSelection = event.ctrlKey || event.metaKey || event.shiftKey;
+    const ids = objectIdsByLayer.get(layerId) ?? [];
+    if (addToSelection && isLayerSelected(layerId)) {
+      // Toggle off: keep everything else that was selected.
+      onSelectObjects([...selectedIds].filter(id => !ids.includes(id)));
+      return;
+    }
+    onSelectObjects(ids, addToSelection);
+  };
 
   const visibleObjectIds = useMemo(
     () => rows.filter(row => !isLayerObject(row.object)).map(row => row.object.id),
@@ -215,7 +245,11 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
         onDragOver={(e) => handleRowDragOver(e, layer, depth)}
         onDrop={(e) => handleRowDrop(e, layer)}
         onDragEnd={finishDrag}
-        className={`flex w-full items-center gap-1.5 px-3 py-1 text-left text-xs transition-colors ${activeLayerId === layer.id ? 'bg-accent/20 text-text' : 'text-text-dim hover:bg-surface'
+        onClick={(event) => handleLayerSelection(event, layer.id)}
+        title="Click to select everything in this layer"
+        className={`flex w-full items-center gap-1.5 px-3 py-1 text-left text-xs transition-colors ${isLayerSelected(layer.id)
+          ? 'bg-accent/30 text-text'
+          : activeLayerId === layer.id ? 'bg-accent/20 text-text' : 'text-text-dim hover:bg-surface'
           } ${dropIndicatorClasses(layer.id)}`}
         style={{ paddingLeft: `${12 + depth * 14}px` }}
       >
