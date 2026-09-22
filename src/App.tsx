@@ -16,6 +16,9 @@ import AboutModal from './components/AboutModal';
 import { getDefaultProjectFilename, parseProjectFile, stringifyProjectFile } from './utils/projectFile';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
+import { saveWiretextFile } from './utils/saveTextFile';
+import { extractSubtreeForExport, getSubtreeExportFilename } from './utils/subtreeExport';
+import { isLayerObject } from './utils/layerMigration';
 import type { KeyboardShortcut, ComponentType } from './types';
 import './App.css';
 
@@ -111,7 +114,8 @@ function App() {
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [shareToast, setShareToast] = useState(false);
   const [fileToast, setFileToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; onSelection: boolean } | null>(null);
+  // `nodeId` is set when the menu was opened on a layers panel row.
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; onSelection: boolean; nodeId?: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Tracks whether the next file picked via fileInputRef should replace the
   // canvas ("load") or merge into it ("import"); set right before the input
@@ -334,12 +338,52 @@ function App() {
     distributeSelection,
   ]);
 
+  // Layers panel row menu (Issue #15): delete the node, or export it with
+  // its subtree as a file that Import can merge back in for reuse.
+  const handleExportNode = useCallback(async (nodeId: string) => {
+    const root = objects.find(obj => obj.id === nodeId);
+    if (!root) return;
+    try {
+      const saved = await saveWiretextFile(
+        stringifyProjectFile(extractSubtreeForExport(objects, nodeId)),
+        getSubtreeExportFilename(root),
+      );
+      if (saved) showFileToast('success', `Exported to ${saved}.`);
+    } catch (error) {
+      console.error('Failed to export the Wiretext objects:', error);
+      showFileToast('error', 'Could not export the selected objects.');
+    }
+  }, [objects, showFileToast]);
+
+  const contextMenuNodeId = contextMenu?.nodeId;
+  const layerNodeMenuItems = useMemo<ContextMenuItem[]>(() => {
+    const node = objects.find(obj => obj.id === contextMenuNodeId);
+    if (!node) return [];
+    const isLayer = isLayerObject(node);
+    return [
+      {
+        id: 'export-node',
+        label: isLayer ? 'Export layer…' : 'Export object…',
+        shortcut: '',
+        onClick: () => { void handleExportNode(node.id); },
+      },
+      {
+        id: 'delete-node',
+        label: isLayer ? 'Delete layer' : 'Delete',
+        shortcut: '',
+        onClick: () => (isLayer ? deleteLayer(node.id) : deleteObject(node.id)),
+      },
+    ];
+  }, [objects, contextMenuNodeId, handleExportNode, deleteLayer, deleteObject]);
+
   const canvasMenuItems = useMemo<ContextMenuItem[]>(() => ([
     { id: 'paste', label: 'Paste', shortcut: '⌘V', onClick: pasteClipboard },
     { id: 'select-all', label: 'Select all', shortcut: '⌘A', onClick: selectAll },
   ]), [pasteClipboard, selectAll]);
 
-  const activeMenuItems = contextMenu?.onSelection ? selectedMenuItems : canvasMenuItems;
+  const activeMenuItems = contextMenu?.nodeId
+    ? layerNodeMenuItems
+    : contextMenu?.onSelection ? selectedMenuItems : canvasMenuItems;
   const menuWidth = 260;
   const menuHeight = Math.min((activeMenuItems.length * 32) + 8, window.innerHeight - 16);
   const menuLeft = contextMenu ? Math.min(contextMenu.x, window.innerWidth - menuWidth - 8) : 0;
@@ -517,6 +561,7 @@ function App() {
                 onDeleteObject={deleteObject}
                 onCreateLayerFromSelection={createLayerFromSelection}
                 onArrangeSelectionLayer={arrangeSelectionLayer}
+                onNodeContextMenu={(nodeId, x, y) => setContextMenu({ x, y, onSelection: false, nodeId })}
               />
             )}
           </div>
