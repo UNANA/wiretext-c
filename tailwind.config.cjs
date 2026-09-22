@@ -15,6 +15,7 @@ module.exports = {
         'text-dim': 'rgb(var(--color-text-dim) / <alpha-value>)',
         accent: 'rgb(var(--color-accent) / <alpha-value>)',
         'grid-dot': 'rgb(var(--color-grid-dot) / <alpha-value>)',
+        'canvas-outside': 'rgb(var(--color-canvas-outside) / <alpha-value>)',
         selection: 'rgb(var(--color-selection) / <alpha-value>)',
         'selection-border': 'rgb(var(--color-selection-border) / <alpha-value>)',
       },

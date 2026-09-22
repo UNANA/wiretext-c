@@ -20,6 +20,7 @@
   --color-text-dim: 133 133 160;
   --color-accent: 108 138 255;
   --color-grid-dot: 19 19 32;
+  --color-canvas-outside: 3 3 5;
   --color-selection: 108 138 255;
   --color-selection-border: 108 138 255;
   --scrollbar-track: 18 18 26;
@@ -36,6 +37,7 @@
   --color-text-dim: 100 116 139;
   --color-accent: 37 99 235;
   --color-grid-dot: 218 226 238;
+  --color-canvas-outside: 222 227 236;
   --color-selection: 37 99 235;
   --color-selection-border: 37 99 235;
   --scrollbar-track: 241 245 249;
