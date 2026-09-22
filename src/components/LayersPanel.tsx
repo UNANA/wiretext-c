@@ -4,8 +4,10 @@ import {
   getLayerDropDepth,
   getLayerDropEdgePlacement,
   getLayerPanelDragPayload,
+  resolveLayerDrop,
   setLayerPanelDragPayload,
   type LayerDropPlacement,
+  type LayerDropResolution,
 } from '../utils/layerDragDrop';
 import { flattenObjectTree } from '../utils/objectHierarchy';
 import { DEFAULT_LAYER_ID, findLayerAncestorId, isLayerObject } from '../utils/layerMigration';
@@ -64,6 +66,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
   const [dragging, setDragging] = useState<{ kind: 'layer' | 'object'; id: string } | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dropPlacement, setDropPlacement] = useState<LayerDropPlacement>('inside');
+  const [dropIndicator, setDropIndicator] = useState<LayerDropResolution['indicator'] | null>(null);
   const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
   const [draftAnnotation, setDraftAnnotation] = useState('');
   const lastSelectedObjectId = useRef<string | null>(null);
@@ -73,6 +76,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
     draggingRef.current = null;
     setDragging(null);
     setDropTargetId(null);
+    setDropIndicator(null);
   };
 
   const startDrag = (event: React.DragEvent, node: CanvasObject) => {
@@ -160,15 +164,6 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
     return index > 0 ? siblings[index - 1].id : undefined;
   };
 
-  const getDropAnchor = (node: CanvasObject, depth: number, desiredDepth: number) => {
-    if (desiredDepth > depth) return { node, placement: 'inside' as const };
-    const rowIndex = rows.findIndex(row => row.object.id === node.id);
-    for (let index = rowIndex; index >= 0; index -= 1) {
-      if (rows[index].depth === desiredDepth) return { node: rows[index].object };
-    }
-    return { node };
-  };
-
   const handleRowDragOver = (event: React.DragEvent, node: CanvasObject, depth: number) => {
     event.preventDefault();
     event.stopPropagation();
@@ -177,9 +172,17 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
     if (!current || current.id === node.id) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const desiredDepth = getLayerDropDepth(event.clientX, rect.left, depth + 1);
-    const anchor = getDropAnchor(node, depth, desiredDepth);
-    setDropTargetId(anchor.node.id);
-    setDropPlacement(anchor.placement ?? getLayerDropEdgePlacement(event.clientY, rect.top, rect.height));
+    const rowIndex = rows.findIndex(row => row.object.id === node.id);
+    const resolution = resolveLayerDrop(
+      rows.map(row => ({ id: row.object.id, depth: row.depth })),
+      rowIndex,
+      getLayerDropEdgePlacement(event.clientY, rect.top, rect.height),
+      desiredDepth,
+    );
+    if (!resolution) return;
+    setDropTargetId(resolution.targetId);
+    setDropPlacement(resolution.placement);
+    setDropIndicator(resolution.indicator);
   };
 
   const handleRowDrop = (event: React.DragEvent, node: CanvasObject) => {
@@ -200,10 +203,21 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
     finishDrag();
   };
 
-  const dropIndicatorClasses = (nodeId: string) => `
-    ${dropTargetId === nodeId && dropPlacement === 'inside' ? 'ring-1 ring-accent' : ''}
-    ${dropTargetId === nodeId && dropPlacement === 'before' ? 'border-t border-accent' : ''}
-    ${dropTargetId === nodeId && dropPlacement === 'after' ? 'border-b border-accent' : ''}`;
+  const dropIndicatorClasses = (nodeId: string) => (
+    dropIndicator?.rowId === nodeId && dropIndicator.edge === 'inside' ? 'ring-1 ring-accent' : ''
+  );
+
+  // Insertion line drawn at the gap the drop resolves to, indented to the
+  // depth the dropped node will land at.
+  const renderDropLine = (nodeId: string) => {
+    if (dropIndicator?.rowId !== nodeId || dropIndicator.edge === 'inside') return null;
+    return (
+      <span
+        className={`pointer-events-none absolute right-0 h-0.5 bg-accent ${dropIndicator.edge === 'top' ? 'top-0' : 'bottom-0'}`}
+        style={{ left: `${12 + dropIndicator.depth * 14}px` }}
+      />
+    );
+  };
 
   const renderLayerRow = (layer: CanvasObject, depth: number) => {
     const name = layer.label || 'Layer';
@@ -215,10 +229,11 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
         onDragOver={(e) => handleRowDragOver(e, layer, depth)}
         onDrop={(e) => handleRowDrop(e, layer)}
         onDragEnd={finishDrag}
-        className={`flex w-full items-center gap-1.5 px-3 py-1 text-left text-xs transition-colors ${activeLayerId === layer.id ? 'bg-accent/20 text-text' : 'text-text-dim hover:bg-surface'
+        className={`relative flex w-full items-center gap-1.5 px-3 py-1 text-left text-xs transition-colors ${activeLayerId === layer.id ? 'bg-accent/20 text-text' : 'text-text-dim hover:bg-surface'
           } ${dropIndicatorClasses(layer.id)}`}
         style={{ paddingLeft: `${12 + depth * 14}px` }}
       >
+        {renderDropLine(layer.id)}
         {dragging && (
           <span className="text-[10px] opacity-70">
             ⋮
@@ -307,11 +322,12 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
         onDrop={(e) => handleRowDrop(e, obj)}
         onDragEnd={finishDrag}
         onClick={(event) => handleObjectSelection(event, obj.id)}
-        className={`flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs ${selectedIds.has(obj.id) ? 'bg-accent/30 text-text' : 'text-text-dim hover:bg-surface'
+        className={`relative flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs ${selectedIds.has(obj.id) ? 'bg-accent/30 text-text' : 'text-text-dim hover:bg-surface'
           } ${dropIndicatorClasses(obj.id)}`}
         style={{ paddingLeft: `${16 + depth * 14}px` }}
         title={getObjectTitle(obj)}
       >
+        {renderDropLine(obj.id)}
         <span className="text-[10px] opacity-70">⋮⋮</span>
         <span className="w-3 text-[10px]">{getObjectIcon(obj)}</span>
         {editingObjectId === obj.id ? (
@@ -402,6 +418,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
           event.preventDefault();
           event.dataTransfer.dropEffect = 'move';
           setDropTargetId('__root-end__');
+          setDropIndicator(null);
         }}
         onDrop={(event) => {
           event.preventDefault();

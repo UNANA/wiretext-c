@@ -5,6 +5,7 @@ import {
   getLayerDropPlacement,
   getLayerPanelDragPayload,
   LAYER_PANEL_DRAG_TYPE,
+  resolveLayerDrop,
   setLayerPanelDragPayload,
 } from './layerDragDrop';
 
@@ -60,5 +61,60 @@ describe('getLayerDropPlacement', () => {
     [139, 'after'],
   ] as const)('maps pointer y %i to %s', (clientY, expected) => {
     expect(getLayerDropPlacement(clientY, 100, 40)).toBe(expected);
+  });
+});
+
+// L1
+//   BoxA
+//   BoxB
+// L2
+//   BoxC
+describe('resolveLayerDrop', () => {
+  const rows = [
+    { id: 'L1', depth: 0 },
+    { id: 'BoxA', depth: 1 },
+    { id: 'BoxB', depth: 1 },
+    { id: 'L2', depth: 0 },
+    { id: 'BoxC', depth: 1 },
+  ];
+
+  it('nests inside the hovered row when pointing deeper than it', () => {
+    expect(resolveLayerDrop(rows, 2, 'before', 2)).toEqual({
+      targetId: 'BoxB',
+      placement: 'inside',
+      indicator: { rowId: 'BoxB', edge: 'inside', depth: 2 },
+    });
+  });
+
+  it('keeps an upper-half drop between the hovered row and the one above (#28)', () => {
+    expect(resolveLayerDrop(rows, 2, 'before', 0)).toEqual({
+      targetId: 'BoxB',
+      placement: 'before',
+      indicator: { rowId: 'BoxB', edge: 'top', depth: 1 },
+    });
+  });
+
+  it('draws a shallow lower-half drop below the hovered row (#27)', () => {
+    expect(resolveLayerDrop(rows, 2, 'after', 0)).toEqual({
+      targetId: 'L2',
+      placement: 'before',
+      indicator: { rowId: 'BoxB', edge: 'bottom', depth: 0 },
+    });
+  });
+
+  it('does not go shallower than the following row', () => {
+    expect(resolveLayerDrop(rows, 1, 'after', 0)).toEqual({
+      targetId: 'BoxB',
+      placement: 'before',
+      indicator: { rowId: 'BoxA', edge: 'bottom', depth: 1 },
+    });
+  });
+
+  it('allows any depth below the last row', () => {
+    expect(resolveLayerDrop(rows, 4, 'after', 0)).toEqual({
+      targetId: 'L2',
+      placement: 'after',
+      indicator: { rowId: 'BoxC', edge: 'bottom', depth: 0 },
+    });
   });
 });
