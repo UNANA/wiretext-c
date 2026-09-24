@@ -4,7 +4,9 @@ import { useCanvas, TOOLS } from './hooks/useCanvas';
 import { useKeyboard } from './hooks/useKeyboard';
 import { useShareUrl, encodeObjects } from './hooks/useShareUrl';
 import { useSettings } from './hooks/useSettings';
+import { usePanelWidths } from './hooks/usePanelWidths';
 import Toolbar from './components/Toolbar';
+import PanelResizeHandle from './components/PanelResizeHandle';
 import Canvas from './components/Canvas';
 import PropertiesPanel from './components/PropertiesPanel';
 import LayersPanel from './components/LayersPanel';
@@ -52,6 +54,7 @@ function App() {
     zoomMode,
     setZoomMode,
   } = useSettings();
+  const { widths: panelWidths, resizeTo: resizePanelTo, startDragging: startPanelResize } = usePanelWidths(sidebarCollapsed);
 
   const {
     objects,
@@ -479,7 +482,7 @@ function App() {
       {/* Main content area */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left sidebar - Tools */}
-        <div className="flex h-full select-none">
+        <div className="flex h-full shrink-0 select-none" style={{ width: sidebarCollapsed ? 40 : panelWidths.left }}>
           <Toolbar
             tool={tool}
             setTool={setTool}
@@ -491,9 +494,17 @@ function App() {
             onShowAbout={() => setShowAboutModal(true)}
           />
         </div>
+        {!sidebarCollapsed && (
+          <PanelResizeHandle
+            side="left"
+            width={panelWidths.left}
+            onPointerDown={startPanelResize}
+            onResize={resizePanelTo}
+          />
+        )}
 
         {/* Center - Canvas */}
-        <div className="relative flex-1 flex flex-col">
+        <div className="relative flex min-w-0 flex-1 flex-col">
           {/* Action buttons overlay */}
           <ActionButtons
             onClear={clearAll}
@@ -570,8 +581,15 @@ function App() {
           )}
         </div>
 
+        <PanelResizeHandle
+          side="right"
+          width={panelWidths.right}
+          onPointerDown={startPanelResize}
+          onResize={resizePanelTo}
+        />
+
         {/* Right sidebar - Inspector tabs */}
-        <div className="flex w-64 select-none flex-col border-l border-border bg-surface">
+        <div className="flex shrink-0 select-none flex-col bg-surface" style={{ width: panelWidths.right }}>
           <div className="flex border-b border-border">
             <button
               onClick={() => setInspectorTab('layers')}

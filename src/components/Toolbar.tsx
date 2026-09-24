@@ -52,7 +52,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
   // Collapsed sidebar — icons only
   if (collapsed) {
     return (
-      <div className="flex w-10 flex-col border-r border-border bg-surface select-none">
+      <div className="flex w-full flex-col bg-surface select-none">
         {/* Expand button */}
         <div className="flex items-center justify-center border-b border-border py-2">
           <button
@@ -145,7 +145,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
 
   // Full sidebar
   return (
-    <div className="flex w-44 flex-col border-r border-border bg-surface select-none">
+    <div className="flex w-full flex-col bg-surface select-none">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <button
