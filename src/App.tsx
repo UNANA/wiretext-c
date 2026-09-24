@@ -16,6 +16,7 @@ import AboutModal from './components/AboutModal';
 import { getDefaultProjectFilename, parseProjectFile, stringifyProjectFile } from './utils/projectFile';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
+import { allowsNativeContextMenu } from './utils/nativeContextMenu';
 import type { KeyboardShortcut, ComponentType } from './types';
 import './App.css';
 
@@ -277,6 +278,14 @@ function App() {
 
   const closeContextMenu = useCallback(() => {
     setContextMenu(null);
+  }, []);
+
+  useEffect(() => {
+    const handleNativeContextMenu = (e: MouseEvent) => {
+      if (!allowsNativeContextMenu(e.target)) e.preventDefault();
+    };
+    window.addEventListener('contextmenu', handleNativeContextMenu);
+    return () => window.removeEventListener('contextmenu', handleNativeContextMenu);
   }, []);
 
   useEffect(() => {
