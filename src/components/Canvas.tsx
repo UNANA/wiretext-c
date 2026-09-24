@@ -1059,7 +1059,7 @@ const Canvas: React.FC<CanvasProps> = ({
 
   return (
     <div
-      className="relative flex-1 overflow-hidden bg-bg"
+      className="relative flex-1 overflow-hidden bg-canvas-outside"
       ref={containerRef}
       onContextMenu={handleContextMenu}
     >
@@ -1076,9 +1076,10 @@ const Canvas: React.FC<CanvasProps> = ({
         X
       </span>
 
-      {/* Grid dot pattern background */}
+      {/* Grid dot pattern background. The placeable area gets the regular
+          background color so it stands out from the darker outside (#14). */}
       <div
-        className="absolute pointer-events-none"
+        className="absolute pointer-events-none bg-bg outline outline-1 outline-border"
         style={{
           left: panX,
           top: panY,
