@@ -14,11 +14,14 @@ import ExportModal from './components/ExportModal';
 import SettingsModal from './components/SettingsModal';
 import AboutModal from './components/AboutModal';
 import { getDefaultProjectFilename, parseProjectFile, stringifyProjectFile } from './utils/projectFile';
-import { save } from '@tauri-apps/plugin-dialog';
-import { writeTextFile } from '@tauri-apps/plugin-fs';
+import { open as openFileDialog, save } from '@tauri-apps/plugin-dialog';
+import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
+import { getLastProjectPath, setLastProjectPath } from './utils/lastProjectPath';
 import { allowsNativeContextMenu } from './utils/nativeContextMenu';
 import type { KeyboardShortcut, ComponentType } from './types';
 import './App.css';
+
+const isTauri = () => '__TAURI_INTERNALS__' in window;
 
 type ContextMenuItem = {
   id: string;
@@ -118,6 +121,10 @@ function App() {
   // canvas ("load") or merge into it ("import"); set right before the input
   // is opened since the change handler fires after the mode is chosen.
   const loadModeRef = useRef<'replace' | 'merge'>('replace');
+  // Desktop only: the project file the canvas was last saved to / opened
+  // from. Ctrl+S overwrites it; with none yet, Save asks for a location.
+  const [currentProjectPath, setCurrentProjectPath] = useState<string | null>(null);
+  const reopenedLastProjectRef = useRef(false);
 
   // Load objects from URL hash on mount
   useShareUrl(loadObjects);
@@ -142,17 +149,23 @@ function App() {
     window.setTimeout(() => setFileToast(null), 2400);
   }, []);
 
-  const handleSaveProject = useCallback(async () => {
+  const rememberProjectPath = useCallback((path: string | null) => {
+    setCurrentProjectPath(path);
+    setLastProjectPath(path);
+  }, []);
+
+  const handleSaveProject = useCallback(async (saveAs = false) => {
     const projectContents = stringifyProjectFile(objects);
 
-    if ('__TAURI_INTERNALS__' in window) {
+    if (isTauri()) {
       try {
-        const path = await save({
-          defaultPath: getDefaultProjectFilename(),
+        const path = (!saveAs && currentProjectPath) || await save({
+          defaultPath: currentProjectPath ?? getDefaultProjectFilename(),
           filters: [{ name: 'Wiretext project', extensions: ['wiretext'] }],
         });
         if (!path) return;
         await writeTextFile(path, projectContents);
+        rememberProjectPath(path);
         showFileToast('success', `Project saved to ${path}.`);
       } catch (error) {
         // Surface the real error (e.g. a Tauri ACL/permission denial) in the
@@ -174,12 +187,51 @@ function App() {
     link.remove();
     URL.revokeObjectURL(url);
     showFileToast('success', 'Project saved.');
-  }, [objects, showFileToast]);
+  }, [objects, currentProjectPath, rememberProjectPath, showFileToast]);
 
-  const handleLoadProject = useCallback(() => {
+  // Desktop only: reads a project from disk and makes it the current file.
+  // `quiet` is used for the reopen-on-launch attempt, where a moved or
+  // deleted file should just be forgotten instead of raising an error toast.
+  const openProjectPath = useCallback(async (path: string, quiet = false) => {
+    try {
+      const { objects: loadedObjects, layers: loadedLayers } = parseProjectFile(await readTextFile(path));
+      loadObjects(loadedObjects, loadedLayers);
+      rememberProjectPath(path);
+      if (!quiet) showFileToast('success', `Loaded ${path}.`);
+    } catch (error) {
+      console.error('Failed to open the Wiretext project:', error);
+      if (quiet) setLastProjectPath(null);
+      else showFileToast('error', 'Could not load that Wiretext file.');
+    }
+  }, [loadObjects, rememberProjectPath, showFileToast]);
+
+  // Reopen the last project on launch, unless a share URL is being opened.
+  useEffect(() => {
+    if (reopenedLastProjectRef.current || !isTauri()) return;
+    reopenedLastProjectRef.current = true;
+    if (window.location.hash.length > 1) return;
+    const lastPath = getLastProjectPath();
+    if (lastPath) void openProjectPath(lastPath, true);
+  }, [openProjectPath]);
+
+  const handleLoadProject = useCallback(async () => {
+    if (isTauri()) {
+      try {
+        const path = await openFileDialog({
+          multiple: false,
+          directory: false,
+          filters: [{ name: 'Wiretext project', extensions: ['wiretext', 'json'] }],
+        });
+        if (typeof path === 'string') await openProjectPath(path);
+      } catch (error) {
+        console.error('Failed to open the Wiretext project:', error);
+        showFileToast('error', 'Could not load that Wiretext file.');
+      }
+      return;
+    }
     loadModeRef.current = 'replace';
     fileInputRef.current?.click();
-  }, []);
+  }, [openProjectPath, showFileToast]);
 
   const handleImportProject = useCallback(() => {
     loadModeRef.current = 'merge';
@@ -245,9 +297,11 @@ function App() {
     { key: 'g', meta: true, handler: () => groupOrUngroupSelection() },
     { key: 'g', meta: true, shift: true, handler: () => moveSelectionToLayer() },
     { key: 's', ctrl: true, handler: () => handleSaveProject() },
+    { key: 's', ctrl: true, shift: true, handler: () => handleSaveProject(true) },
     { key: 'o', ctrl: true, handler: () => handleLoadProject() },
     { key: 'o', ctrl: true, shift: true, handler: () => handleImportProject() },
     { key: 's', meta: true, handler: () => handleSaveProject() },
+    { key: 's', meta: true, shift: true, handler: () => handleSaveProject(true) },
     { key: 'o', meta: true, handler: () => handleLoadProject() },
     { key: 'o', meta: true, shift: true, handler: () => handleImportProject() },
     { key: ']', meta: true, handler: () => arrangeSelectionLayer('toFront') },
@@ -399,8 +453,8 @@ function App() {
           {/* Action buttons overlay */}
           <ActionButtons
             onClear={clearAll}
-            onSave={handleSaveProject}
-            onLoad={handleLoadProject}
+            onSave={() => handleSaveProject()}
+            onLoad={() => handleLoadProject()}
             onImport={handleImportProject}
             onExport={handleExport}
             onShare={handleShare}

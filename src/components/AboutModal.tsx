@@ -27,6 +27,7 @@ const SHORTCUTS = [
   { keys: '⌘C', action: 'Copy' },
   { keys: '⌘D', action: 'Duplicate' },
   { keys: '⌘S', action: 'Save project' },
+  { keys: '⌘⇧S', action: 'Save project as' },
   { keys: '⌘O', action: 'Load project' },
   { keys: '[ / ]', action: 'Reorder' },
   { keys: '⌘[', action: 'Send to back' },

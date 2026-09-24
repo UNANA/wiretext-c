@@ -30,7 +30,7 @@ const ActionButtons: React.FC<ActionButtonsProps> = ({
       <button
         className="rounded border border-border bg-surface px-3 py-1.5 text-text-dim text-xs transition-colors hover:bg-surface-hover hover:text-text"
         onClick={onSave}
-        title="Save project (Ctrl+S)"
+        title="Save project (Ctrl+S) — overwrites the open file in the desktop app; Ctrl+Shift+S saves as"
       >
         Save
       </button>
