@@ -173,6 +173,31 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
     onNodeContextMenu(node.id, event.clientX, event.clientY);
   };
 
+  const sortedChildren = (parentId?: string) => objects
+    .filter(other => (other.parentId ?? null) === (parentId ?? null))
+    .sort((a, b) => a.zIndex - b.zIndex);
+
+  // Outdent: the object leaves its parent and lands right after it.
+  const outdentObject = (obj: CanvasObject) => {
+    if (obj.parentId) onReorderObjectByDrop(obj.id, obj.parentId, 'after');
+  };
+
+  // Indent: the object becomes the last child of its previous sibling.
+  const indentTargetFor = (obj: CanvasObject): CanvasObject | undefined => {
+    const siblings = sortedChildren(obj.parentId);
+    const index = siblings.findIndex(other => other.id === obj.id);
+    return index > 0 ? siblings[index - 1] : undefined;
+  };
+
+  const indentObject = (obj: CanvasObject) => {
+    const newParent = indentTargetFor(obj);
+    if (!newParent) return;
+    const children = sortedChildren(newParent.id);
+    const lastChild = children[children.length - 1];
+    if (lastChild) onReorderObjectByDrop(obj.id, lastChild.id, 'after');
+    else onReorderObjectByDrop(obj.id, newParent.id, 'inside');
+  };
+
   const handleRowDragOver = (event: React.DragEvent, node: CanvasObject, depth: number) => {
     event.preventDefault();
     event.stopPropagation();
@@ -375,6 +400,20 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
           </span>
         )}
         <span className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
+          <span
+            role="button"
+            tabIndex={0}
+            title="Outdent (move out of parent)"
+            className={`px-0.5 ${obj.parentId ? 'hover:text-text' : 'opacity-30'}`}
+            onClick={() => outdentObject(obj)}
+          >←</span>
+          <span
+            role="button"
+            tabIndex={0}
+            title="Indent under previous item"
+            className={`px-0.5 ${indentTargetFor(obj) ? 'hover:text-text' : 'opacity-30'}`}
+            onClick={() => indentObject(obj)}
+          >→</span>
           <span
             role="button"
             tabIndex={0}
