@@ -31,6 +31,7 @@ interface LayersPanelProps {
   onDeleteObject: (objectId: string) => void;
   onCreateLayerFromSelection: () => void;
   onArrangeSelectionLayer: (mode: 'toFront' | 'forward' | 'backward' | 'toBack') => void;
+  onNodeContextMenu: (nodeId: string, x: number, y: number) => void;
 }
 
 function getObjectIcon(obj: CanvasObject): string {
@@ -60,6 +61,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
   onDeleteObject,
   onCreateLayerFromSelection,
   onArrangeSelectionLayer,
+  onNodeContextMenu,
 }) => {
   const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
   const [draftLayerName, setDraftLayerName] = useState('');
@@ -164,6 +166,13 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
     return index > 0 ? siblings[index - 1].id : undefined;
   };
 
+  const handleRowContextMenu = (event: React.MouseEvent, node: CanvasObject) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isLayerObject(node) && !selectedIds.has(node.id)) onSelectObject(node.id);
+    onNodeContextMenu(node.id, event.clientX, event.clientY);
+  };
+
   const handleRowDragOver = (event: React.DragEvent, node: CanvasObject, depth: number) => {
     event.preventDefault();
     event.stopPropagation();
@@ -229,6 +238,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
         onDragOver={(e) => handleRowDragOver(e, layer, depth)}
         onDrop={(e) => handleRowDrop(e, layer)}
         onDragEnd={finishDrag}
+        onContextMenu={(e) => handleRowContextMenu(e, layer)}
         className={`relative flex w-full items-center gap-1.5 px-3 py-1 text-left text-xs transition-colors ${activeLayerId === layer.id ? 'bg-accent/20 text-text' : 'text-text-dim hover:bg-surface'
           } ${dropIndicatorClasses(layer.id)}`}
         style={{ paddingLeft: `${12 + depth * 14}px` }}
@@ -321,6 +331,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
         onDragOver={(e) => handleRowDragOver(e, obj, depth)}
         onDrop={(e) => handleRowDrop(e, obj)}
         onDragEnd={finishDrag}
+        onContextMenu={(e) => handleRowContextMenu(e, obj)}
         onClick={(event) => handleObjectSelection(event, obj.id)}
         className={`relative flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs ${selectedIds.has(obj.id) ? 'bg-accent/30 text-text' : 'text-text-dim hover:bg-surface'
           } ${dropIndicatorClasses(obj.id)}`}
