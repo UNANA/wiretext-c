@@ -15,12 +15,12 @@ export function getFirstLine(text: string | undefined): string {
 /**
  * Short, single-line display title for an object row (layers panel, etc).
  * Prefers the user-supplied annotation/label, falling back to type-specific
- * defaults. Multi-line annotations/content are collapsed to their first
+ * defaults. Multi-line annotations/labels/content are collapsed to their first
  * line so the title never breaks a single-line layout.
  */
 export function getObjectTitle(obj: CanvasObject): string {
-  if (obj.type === 'line' && obj.isConnector) return getFirstLine(obj.annotation) || obj.label || 'connector';
-  if (obj.type === 'component') return getFirstLine(obj.annotation) || obj.label || obj.componentType || 'component';
+  if (obj.type === 'line' && obj.isConnector) return getFirstLine(obj.annotation) || getFirstLine(obj.label) || 'connector';
+  if (obj.type === 'component') return getFirstLine(obj.annotation) || getFirstLine(obj.label) || obj.componentType || 'component';
   if (obj.type === 'text') return getFirstLine(obj.content) || 'text';
-  return getFirstLine(obj.annotation) || obj.label || obj.type;
+  return getFirstLine(obj.annotation) || getFirstLine(obj.label) || obj.type;
 }

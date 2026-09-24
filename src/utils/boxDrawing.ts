@@ -1,5 +1,5 @@
 import type { Grid, BoxStyle, CanvasObject, ComponentType, GridSize, LabelAlign, LabelVerticalAlign } from '../types';
-import { computeLabelPlacement } from './labelLayout';
+import { computeLabelLines } from './labelLayout';
 import { sortObjectsByStackOrder } from './objectHierarchy';
 import { isLayerObject } from './layerMigration';
 
@@ -155,10 +155,11 @@ export function placeCenteredText(grid: Grid, col: number, row: number, width: n
   drawText(grid, startCol, centerRow, displayText);
 }
 
-// Place a label inside a box/button with configurable alignment. Defaults
-// (center/middle) reproduce placeCenteredText, so unset labelPosition keeps
-// the legacy appearance. Positioning logic lives in the pure
-// computeLabelPlacement so it can be unit-tested.
+// Place a (possibly multi-line) label inside a box/button with configurable
+// alignment. Defaults (center/middle) reproduce placeCenteredText for a
+// single line, so unset labelPosition keeps the legacy appearance.
+// Positioning logic lives in the pure computeLabelLines so it can be
+// unit-tested.
 export function placeLabel(
   grid: Grid,
   col: number,
@@ -170,8 +171,9 @@ export function placeLabel(
   verticalAlign: LabelVerticalAlign = 'middle',
 ): void {
   if (!text) return;
-  const placement = computeLabelPlacement(col, row, width, height, text, align, verticalAlign);
-  drawText(grid, placement.col, placement.row, placement.text);
+  for (const placement of computeLabelLines(col, row, width, height, text, align, verticalAlign)) {
+    drawText(grid, placement.col, placement.row, placement.text);
+  }
 }
 
 // Get diagonal direction (b function)

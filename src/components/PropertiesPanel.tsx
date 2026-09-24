@@ -474,13 +474,25 @@ const SingleObjectProperties: React.FC<SingleObjectPropertiesProps> = ({
       {canHaveLabel && (
         <div>
           <label className="block text-2xs text-text-dim mb-1">Label</label>
-          <input
-            type="text"
-            value={obj.label || ''}
-            onChange={(e) => onUpdateObject(obj.id, { label: e.target.value || undefined })}
-            placeholder="Enter label..."
-            className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
-          />
+          {/* Box and button labels are laid out line by line (Issue #25);
+              other components draw their label on a single row. */}
+          {canPositionLabel(obj) ? (
+            <textarea
+              value={obj.label || ''}
+              onChange={(e) => onUpdateObject(obj.id, { label: e.target.value || undefined })}
+              rows={2}
+              placeholder="Enter label..."
+              className="w-full resize-y bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
+            />
+          ) : (
+            <input
+              type="text"
+              value={obj.label || ''}
+              onChange={(e) => onUpdateObject(obj.id, { label: e.target.value || undefined })}
+              placeholder="Enter label..."
+              className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none"
+            />
+          )}
         </div>
       )}
 
@@ -502,7 +514,7 @@ const SingleObjectProperties: React.FC<SingleObjectPropertiesProps> = ({
             onChange={(e) => onUpdateObject(obj.id, { content: e.target.value })}
             rows={3}
             placeholder="Enter text..."
-            className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none resize-none"
+            className="w-full bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:border-accent outline-none resize-y"
           />
         </div>
       )}

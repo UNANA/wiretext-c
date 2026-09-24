@@ -59,3 +59,40 @@ export function computeLabelPlacement(
 
   return { col: startCol, row: startRow, text: displayText };
 }
+
+// Multi-line variant (Issue #25): each '\n'-separated line is aligned
+// horizontally on its own, and the block as a whole is aligned vertically
+// within the frame's inner rows. Lines that don't fit the inner height are
+// dropped. A single line yields exactly computeLabelPlacement's result.
+export function computeLabelLines(
+  col: number,
+  row: number,
+  width: number,
+  height: number,
+  text: string,
+  align: LabelAlign = 'center',
+  verticalAlign: LabelVerticalAlign = 'middle',
+): LabelPlacement[] {
+  const maxLines = Math.max(1, height - 2);
+  const lines = text.split('\n').slice(0, maxLines);
+  const count = lines.length;
+
+  let startRow: number;
+  switch (verticalAlign) {
+    case 'top':
+      startRow = row + 1;
+      break;
+    case 'bottom':
+      startRow = row + height - 1 - count;
+      break;
+    case 'middle':
+    default:
+      startRow = row + Math.floor((height - count + 1) / 2);
+      break;
+  }
+
+  return lines.map((line, index) => ({
+    ...computeLabelPlacement(col, row, width, height, line, align, verticalAlign),
+    row: startRow + index,
+  }));
+}
